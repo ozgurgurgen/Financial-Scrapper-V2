@@ -1,0 +1,8 @@
+{
+  "name": "Financial Scraper",
+  "description": "BIST, TEFAS, US Markets, Crypto, KAP Data Engine & Professional API Telemetry, Diagnostic and Chart Analytics Hub.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

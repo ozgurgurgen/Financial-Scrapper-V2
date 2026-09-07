@@ -1,0 +1,95 @@
+[
+  {
+    "disclosure_index": 1658690,
+    "symbol": "IGI",
+    "company_title": "İSTANBUL PORTFÖY YÖNETİMİ A.Ş. BOSPHORIST  GİRİŞİM SERMAYESİ YATIRIM FONU",
+    "title": "İç Tüzük",
+    "publish_date": "03.09.2026 23:38:33",
+    "category_code": "FUNDS",
+    "category_title": "Fon ve Menkul Kıymet Bilgileri",
+    "url": "https://www.kap.org.tr/tr/Bildirim/1658690",
+    "is_large_doc": true,
+    "text_length": 2325,
+    "ai_summary": "[Gemini yanıtı alınamadı]",
+    "attachments_count": 1,
+    "attachments": [
+      {
+        "name": "Bosphorist GSYF_Yeni İçtüzük-06.07.2026.pdf",
+        "extension": "pdf",
+        "url": "https://www.kap.org.tr/tr/api/file/download/4028328d9f52dddc01a068fe152c30d1"
+      }
+    ]
+  },
+  {
+    "disclosure_index": 1658686,
+    "symbol": null,
+    "company_title": "SERMAYE PİYASASI KURULU",
+    "title": "SPK Bülteni",
+    "publish_date": "03.09.2026 20:56:07",
+    "category_code": "SPECIAL_EVENTS",
+    "category_title": "Özel Durum Açıklamaları (ÖDA)",
+    "url": "https://www.kap.org.tr/tr/Bildirim/1658686",
+    "is_large_doc": false,
+    "text_length": 806,
+    "ai_summary": "",
+    "attachments_count": 0,
+    "attachments": []
+  },
+  {
+    "disclosure_index": 1658684,
+    "symbol": "IDD",
+    "company_title": "LOGOS PORTFÖY DİNAMİK DAĞILIMLI SERBEST FON",
+    "title": "Portföy Dağılım Raporu",
+    "publish_date": "03.09.2026 20:44:58",
+    "category_code": "FUNDS",
+    "category_title": "Fon ve Menkul Kıymet Bilgileri",
+    "url": "https://www.kap.org.tr/tr/Bildirim/1658684",
+    "is_large_doc": true,
+    "text_length": 2440,
+    "ai_summary": "Sayın yatırımcılar,\n\nİncelediğim KAP bildirim metni üzerine yapılan analiz özetim aşağıdadır:\n\n1.  **Bildirimin Niteliği:** Sunulan metin, bir \"Portföy Dağılım Raporu\"nun taslağı veya boş bir şablonu niteliğindedir. Bildirimin \"Yapılan Açıklama Güncelleme mi?\" ve \"Yapılan Açıklama Düzeltme mi?\" sorularına \"Hayır\" yanıtı verilmiştir.\n2.  **Kritik Veri Eksikliği:** Metin içerisinde \"Açıklamalar\" bölümü tamamen boştur ve herhangi bir portföy dağılım bilgisi (varlık sınıflarına göre oranlar, rakamlar, yatırım yapılan enstrümanlar vb.) bulunmamaktadır. Editör arayüzüne ait metinler dışında finansal bir içerik yer almamaktadır.\n3.  **Yatırımcı Kararları İçin Değersizlik:** Bu haliyle, bildirimde yatırımcıların şirketin/fonun portföy yapısı, risk profili, yatırım stratejileri veya gelecek beklentileri hakkında bilgi edinmesini sağlayacak kritik bir rakam, oran, tarih veya alınmış bir karar yer almamaktadır.\n4.  **Sonuç:** Mevcut KAP bildirimi, yatırımcılar için herhangi bir finansal analiz veya karar alma sürecine katkı sağlayacak somut bilgi içermemektedir. İçeriğin boş olması nedeniyle, bu bildirimin tamamlanmamış veya hatalı bir gönderim olduğu izlenimi edinilmiştir. İlgili portföy dağılım detaylarının kamuya açıklanması gerekmektedir.",
+    "attachments_count": 1,
+    "attachments": [
+      {
+        "name": "IDD_2026.08.pdf",
+        "extension": "pdf",
+        "url": "https://www.kap.org.tr/tr/api/file/download/4028328d9f52dddd01a0685f19266103"
+      }
+    ]
+  },
+  {
+    "disclosure_index": 1658683,
+    "symbol": "BPV",
+    "company_title": "BTCTURK PORTFÖY PARA PİYASASI (TL) FONU",
+    "title": "Risk Ölçüm ve Değerleme Esasları",
+    "publish_date": "03.09.2026 20:42:34",
+    "category_code": "FUNDS",
+    "category_title": "Fon ve Menkul Kıymet Bilgileri",
+    "url": "https://www.kap.org.tr/tr/Bildirim/1658683",
+    "is_large_doc": true,
+    "text_length": 2456,
+    "ai_summary": "Sayın yatırımcılar,\n\nİncelediğimiz KAP bildirim metni, Borsa İstanbul'daki \"Risk Ölçüm ve Değerleme Esasları\" başlığıyla yayımlanmıştır. Ancak, detaylı incelememiz sonucunda yatırımcılar için kritik öneme sahip aşağıdaki hususlar tespit edilmiştir:\n\n1.  **İçerik Eksikliği:** Bildirimin \"Açıklamalar\" ve \"Bildirim İçeriği\" bölümlerinde, şirketin risk ölçüm ve değerleme esaslarına dair herhangi bir somut açıklama, finansal rakam, oran, tarih veya yönetim kurulu kararı gibi *hiçbir bilgi bulunmamaktadır*.\n2.  **Şablon Metin:** Görüntülenen içerik, bir metin düzenleyici arayüzü (Summernote 0.6.16) ve yer tutucu ifadelerden (\"Resim ekle\", \"Bağlantı ekle\", \"Kısayollar\" vb.) oluşmaktadır. Bu durum, asıl açıklama metninin henüz eklenmediğini veya bildirimde bir hata olduğunu düşündürmektedir.\n3.  **Yatırımcı İçin Veri Yokluğu:** Mevcut haliyle, bu bildirim, yatırımcıların şirketin risk yönetimi politikaları veya finansal durumu hakkında yeni bir değerlendirme yapmasına olanak sağlayacak *hiçbir kritik veri veya karar sunmamaktadır*.\n4.  **Eylemsiz Bilgi:** Yatırımcıların bu bildirim üzerinden şirketle ilgili herhangi bir yatırım kararı alması veya pozisyonunu gözden geçirmesi için bir sebep bulunmamaktadır; zira ortada yorumlanacak bir içerik mevcut değildir. Şirketin bu bildirimi düzeltmesi veya eksik içeriğiyle yeniden yayımlaması beklenmelidir.",
+    "attachments_count": 1,
+    "attachments": [
+      {
+        "name": "BtcTurk Para Piyasası (TL) Fonu Temel Yatırım Riskleri Risk Ölçümü ve Değerleme.pdf",
+        "extension": "pdf",
+        "url": "https://www.kap.org.tr/tr/api/file/download/4028328c9f52dc4001a067e2cbae1dec"
+      }
+    ]
+  },
+  {
+    "disclosure_index": 1658673,
+    "symbol": "FBI",
+    "company_title": "FİBA PORTFÖY BİRİNCİ SERBEST (DÖVİZ) FON",
+    "title": "Borsa Dışı Repo - Ters Repo Sözleşmesi",
+    "publish_date": "03.09.2026 19:24:03",
+    "category_code": "FUNDS",
+    "category_title": "Fon ve Menkul Kıymet Bilgileri",
+    "url": "https://www.kap.org.tr/tr/Bildirim/1658673",
+    "is_large_doc": true,
+    "text_length": 3041,
+    "ai_summary": "[Gemini yanıtı alınamadı]",
+    "attachments_count": 0,
+    "attachments": []
+  }
+]
