@@ -2,7 +2,7 @@ import { db } from '../db/index.ts';
 import { settings } from '../db/schema.ts';
 import { eq } from 'drizzle-orm';
 import { appEventBus } from './AppEventBus.ts';
-import { multiLLMService, AIProviderType, ActiveAIConfig } from './MultiLLMService.ts';
+import { multiLLMService, type AIProviderType, type ActiveAIConfig } from './MultiLLMService.ts';
 
 export interface AISettingsConfig {
   enabled: boolean;
@@ -223,7 +223,7 @@ ${truncatedText}`;
         activeConfig = {
           provider: 'gemini',
           apiKey,
-          model: config.geminiModel || 'gemini-3.8-flash',
+          model: config.geminiModel || 'gemini-2.5-flash',
         };
       } else if (config.provider === 'openai') {
         const apiKey = config.key || (config as any).openaiKey || process.env.OPENAI_API_KEY;
@@ -293,7 +293,8 @@ ${truncatedText}`;
         prompt,
         systemInstruction: 'Finansal analiz sistemi test yanıtı.',
         temperature: 0.1,
-      }, activeConfig);
+        strict: true,
+      }, { ...activeConfig, strict: true });
 
       return {
         success: true,

@@ -41,6 +41,7 @@ import { selfHealingSchemaParser } from './src/services/SelfHealingSchemaParser.
 import { dataSourceHealthService } from './src/services/DataSourceHealthService.ts';
 import { telegramService } from './src/services/TelegramService.ts';
 import { apiTelemetryService } from './src/services/ApiTelemetryService.ts';
+import { comprehensiveDataService } from './src/services/ComprehensiveDataIntegrationService.ts';
 
 // Register Adapters
 syncManager.registerAdapter(new YahooAdapter());
@@ -1850,7 +1851,7 @@ SELECT pg_size_pretty(pg_database_size(current_database())) AS current_database_
           },
           aiSelfHealingParser: {
             enabled: true,
-            model: 'gemini-3.8-flash',
+            model: 'gemini-2.5-flash',
             activeRulesCount: healingRules.length,
             rules: healingRules,
           },
@@ -2151,6 +2152,135 @@ SELECT pg_size_pretty(pg_database_size(current_database())) AS current_database_
   });
 
   // =========================================================================
+  // MARKETPULSE AI - KAPSAMLI VERİ ENTEGRASYONU VE DIŞA/İÇE AKTARIM (EXPORT/IMPORT/SCREENER)
+  // =========================================================================
+
+  // 1. BIST Piyasa & Screener Hisseleri
+  app.get(['/api/export/companies', '/api/screener/stocks'], async (req, res) => {
+    try {
+      const companies = await comprehensiveDataService.getCompaniesExport();
+      res.json(companies);
+    } catch (error: any) {
+      res.status(500).json({ success: false, error: error.message });
+    }
+  });
+
+  // 2. KAP Bilanço, Gelir Tablosu & Finansal Kalemler (36 Sütun)
+  app.get('/api/export/financials/:ticker', async (req, res) => {
+    try {
+      const financials = await comprehensiveDataService.getFinancialsExport(req.params.ticker);
+      if (financials.length === 1) {
+        res.json(financials[0]);
+      } else {
+        res.json(financials);
+      }
+    } catch (error: any) {
+      res.status(500).json({ success: false, error: error.message });
+    }
+  });
+
+  app.get('/api/export/financials', async (req, res) => {
+    try {
+      const financials = await comprehensiveDataService.getFinancialsExport();
+      res.json(financials);
+    } catch (error: any) {
+      res.status(500).json({ success: false, error: error.message });
+    }
+  });
+
+  // 3. TEFAS & Takasbank Yatırım Fonları
+  app.get('/api/export/funds', async (req, res) => {
+    try {
+      const funds = await comprehensiveDataService.getFundsExport();
+      res.json(funds);
+    } catch (error: any) {
+      res.status(500).json({ success: false, error: error.message });
+    }
+  });
+
+  app.get('/api/export/fund/:code', async (req, res) => {
+    try {
+      const fund = await comprehensiveDataService.getFundsExport(req.params.code);
+      if (fund.length > 0) {
+        res.json(fund[0]);
+      } else {
+        res.status(404).json({ success: false, error: `Fon bulunamadı: ${req.params.code}` });
+      }
+    } catch (error: any) {
+      res.status(500).json({ success: false, error: error.message });
+    }
+  });
+
+  // 4. SPK Halka Arz (IPO) Listesi & Dağıtım Bilgileri
+  app.get(['/api/export/ipo', '/api/export/ipos', '/api/admin/ipo', '/api/ipos/structured'], async (req, res) => {
+    try {
+      const ipos = await comprehensiveDataService.getIposExport();
+      res.json(ipos);
+    } catch (error: any) {
+      res.status(500).json({ success: false, error: error.message });
+    }
+  });
+
+  // 5. Şirket Geri Alımları (Share Buybacks)
+  app.get(['/api/export/buybacks', '/api/buybacks'], async (req, res) => {
+    try {
+      const buybacks = await comprehensiveDataService.getBuybacksExport();
+      res.json(buybacks);
+    } catch (error: any) {
+      res.status(500).json({ success: false, error: error.message });
+    }
+  });
+
+  // 6. KAP Özel Durum Açıklamaları & Bildirimler
+  app.get(['/api/export/disclosures', '/api/disclosures/export'], async (req, res) => {
+    try {
+      const disclosures = await comprehensiveDataService.getDisclosuresExport();
+      res.json(disclosures);
+    } catch (error: any) {
+      res.status(500).json({ success: false, error: error.message });
+    }
+  });
+
+  // 7. Toplu Dışa Aktarma (Bulk Export by Table Parameters)
+  app.get('/api/export/bulk', async (req, res) => {
+    try {
+      const tableQuery = req.query.tables ? String(req.query.tables).split(',').map(t => t.trim()) : undefined;
+      const bulkData = await comprehensiveDataService.getBulkExport(tableQuery);
+      res.json(bulkData);
+    } catch (error: any) {
+      res.status(500).json({ success: false, error: error.message });
+    }
+  });
+
+  // 8. Toplu İçe Aktarma (Bulk JSON Ingestion API)
+  app.post(['/api/import/bulk', '/api/import/json'], async (req, res) => {
+    try {
+      const payload = req.body;
+      if (!payload || typeof payload !== 'object') {
+        return res.status(400).json({ success: false, error: 'Geçersiz JSON yükü.' });
+      }
+      const result = await comprehensiveDataService.importBulkData(payload);
+      res.json(result);
+    } catch (error: any) {
+      res.status(500).json({ success: false, error: error.message });
+    }
+  });
+
+  // 9. Uzak Veri Sunucusundan Otomatik Senkronizasyon (Cloudflare Tunnel / Local Finance API)
+  app.post('/api/sync/remote-finance-api', async (req, res) => {
+    try {
+      const { baseUrl } = req.body;
+      if (!baseUrl) {
+        return res.status(400).json({ success: false, error: 'baseUrl parametresi zorunludur.' });
+      }
+      const result = await comprehensiveDataService.syncFromRemoteFinanceApi(baseUrl);
+      res.json(result);
+    } catch (error: any) {
+      res.status(500).json({ success: false, error: error.message });
+    }
+  });
+
+  // =========================================================================
   // CANLI OFİS REALTIME SERVER-SENT EVENTS (SSE) ENDPOINT
   // =========================================================================
   app.get('/api/v1/events/stream', (req, res) => {
@@ -2192,14 +2322,7 @@ SELECT pg_size_pretty(pg_database_size(current_database())) AS current_database_
     });
   });
 
-  // Initialize automated background jobs when server starts
-  scheduleSyncJobs().catch(console.error);
-  automatedSchedulerService.init().catch(console.error);
-  import('./src/services/AssetHubService.ts').then(({ assetHubService }) => {
-    assetHubService.syncMasterAssetRegistry().catch(console.error);
-  }).catch(console.error);
-
-  // --- Vite Middleware (Development) ---
+  // --- Vite Middleware (Development & Production SPA) ---
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
       server: { middlewareMode: true },
@@ -2207,7 +2330,6 @@ SELECT pg_size_pretty(pg_database_size(current_database())) AS current_database_
     });
     app.use(vite.middlewares);
   } else {
-    // Production static serving
     const distPath = path.join(process.cwd(), 'dist');
     app.use(express.static(distPath));
     app.get('*', (req, res) => {
@@ -2217,6 +2339,40 @@ SELECT pg_size_pretty(pg_database_size(current_database())) AS current_database_
 
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`Server running on port ${PORT}`);
+
+    // Graceful asynchronous bootstrap after server is listening
+    setTimeout(async () => {
+      try {
+        await comprehensiveDataService.initializeSeedData();
+      } catch (e: any) {
+        console.warn('[Startup] Seed data notice:', e.message);
+      }
+
+      try {
+        await scheduleSyncJobs();
+      } catch (e: any) {
+        console.warn('[Startup] Multi-sync schedule notice:', e.message);
+      }
+
+      try {
+        await automatedSchedulerService.init();
+      } catch (e: any) {
+        console.warn('[Startup] Automated scheduler notice:', e.message);
+      }
+
+      try {
+        await telegramService.initScheduler();
+      } catch (e: any) {
+        console.warn('[Startup] Telegram service notice:', e.message);
+      }
+
+      try {
+        const { assetHubService } = await import('./src/services/AssetHubService.ts');
+        await assetHubService.syncMasterAssetRegistry();
+      } catch (e: any) {
+        console.warn('[Startup] AssetHub registry notice:', e.message);
+      }
+    }, 1000);
   });
 }
 

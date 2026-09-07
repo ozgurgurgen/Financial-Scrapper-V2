@@ -47,18 +47,17 @@ export class TelegramService {
   }
 
   constructor() {
-    // Initialize periodic timer on bootstrap
-    this.initScheduler();
+    // Lazy initialize on first usage or when explicitly scheduled
   }
 
-  private async initScheduler() {
+  public async initScheduler() {
     try {
       const config = await this.getConfig();
       if (config.enabled && config.healthReportIntervalMinutes > 0) {
         this.rescheduleHealthReport();
       }
-    } catch (e) {
-      console.warn('[TelegramService] Scheduler init warning:', e);
+    } catch (e: any) {
+      console.warn('[TelegramService] Scheduler init warning (using defaults):', e.message);
     }
   }
 

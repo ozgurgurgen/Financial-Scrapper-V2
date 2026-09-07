@@ -226,98 +226,113 @@ export class AssetHubService {
     this.isSyncingRegistry = true;
 
     try {
-      console.log('[AssetHubService] Synchronizing Master Asset Registry across all database tables...');
+      console.log('[AssetHubService] Synchronizing Master Asset Registry across all database tables (bulk mode)...');
       let newAdded = 0;
 
-      // 1. Existing Assets Map
+      // 1. Existing Assets and Mappings Map in single queries
       const existingAssets = await db.select().from(assets);
-      const assetMap = new Map<string, typeof assets.$inferSelect>();
+      const assetMap = new Map<string, { id: number; code: string; name: string; type: string }>();
       for (const a of existingAssets) {
-        assetMap.set(a.code.toUpperCase(), a);
+        assetMap.set(a.code.toUpperCase(), { id: a.id, code: a.code, name: a.name, type: a.type });
       }
 
-      // Helper function to register asset
-      const ensureAsset = async (code: string, name: string, type: string, source: string, sourceCode: string) => {
-        const cleanCode = code.toUpperCase().trim();
-        if (!cleanCode) return;
+      const existingMappings = await db.select().from(assetMappings);
+      const mappingSet = new Set<string>();
+      for (const m of existingMappings) {
+        mappingSet.add(`${m.assetId}_${m.source}`);
+      }
 
-        let assetRecord = assetMap.get(cleanCode);
-        if (!assetRecord) {
-          const [inserted] = await db.insert(assets).values({
-            code: cleanCode,
-            name: name || cleanCode,
-            type: type,
-            isActive: true,
-          }).returning();
-          assetRecord = inserted;
-          assetMap.set(cleanCode, inserted);
-          newAdded++;
-        } else if ((assetRecord.type === 'STOCK' || assetRecord.type === 'ASSET') && type !== 'STOCK') {
-          await db.update(assets).set({ type, name: name || assetRecord.name }).where(eq(assets.id, assetRecord.id));
-          assetRecord.type = type;
-        }
-
-        // Check mapping
-        if (assetRecord && assetRecord.id) {
-          const existingMapping = await db.select().from(assetMappings)
-            .where(and(eq(assetMappings.assetId, assetRecord.id), eq(assetMappings.source, source)))
-            .limit(1);
-
-          if (existingMapping.length === 0) {
-            await db.insert(assetMappings).values({
-              assetId: assetRecord.id,
-              source: source,
-              sourceCode: sourceCode || cleanCode,
-            });
-          }
-        }
-      };
+      // Collect assets to register
+      const candidates: Array<{ code: string; name: string; type: string; source: string; sourceCode: string }> = [];
 
       // 2. Gather from BIST Stocks
       const allBist = await db.select({ ticker: bistStocks.ticker, name: bistStocks.companyName }).from(bistStocks);
       for (const s of allBist) {
-        await ensureAsset(s.ticker, s.name || s.ticker, 'BIST_STOCK', 'BIST', s.ticker);
+        if (s.ticker) candidates.push({ code: s.ticker, name: s.name || s.ticker, type: 'BIST_STOCK', source: 'BIST', sourceCode: s.ticker });
       }
 
       // 3. Gather from US Stocks
       const allUs = await db.select({ ticker: usStocks.ticker, name: usStocks.companyName }).from(usStocks);
       for (const s of allUs) {
-        await ensureAsset(s.ticker, s.name || s.ticker, 'US_STOCK', 'NASDAQ_NYSE', s.ticker);
+        if (s.ticker) candidates.push({ code: s.ticker, name: s.name || s.ticker, type: 'US_STOCK', source: 'NASDAQ_NYSE', sourceCode: s.ticker });
       }
 
       // 4. Gather from US ETFs
       const allEtfs = await db.select({ ticker: usEtfs.ticker, name: usEtfs.name }).from(usEtfs);
       for (const e of allEtfs) {
-        await ensureAsset(e.ticker, e.name || e.ticker, 'US_ETF', 'US_ETF', e.ticker);
+        if (e.ticker) candidates.push({ code: e.ticker, name: e.name || e.ticker, type: 'US_ETF', source: 'US_ETF', sourceCode: e.ticker });
       }
 
       // 5. Gather from Crypto Coins
       const allCrypto = await db.select({ symbol: cryptoCoins.symbol, name: cryptoCoins.name }).from(cryptoCoins);
       for (const c of allCrypto) {
-        await ensureAsset(c.symbol, c.name || c.symbol, 'CRYPTO', 'CRYPTO_EXCHANGE', c.symbol);
+        if (c.symbol) candidates.push({ code: c.symbol, name: c.name || c.symbol, type: 'CRYPTO', source: 'CRYPTO_EXCHANGE', sourceCode: c.symbol });
       }
 
       // 6. Gather from TEFAS Funds
       const allTefas = await db.select({ code: tefasFunds.code, name: tefasFunds.name }).from(tefasFunds);
       for (const f of allTefas) {
-        await ensureAsset(f.code, f.name || f.code, 'TEFAS_FUND', 'TEFAS', f.code);
+        if (f.code) candidates.push({ code: f.code, name: f.name || f.code, type: 'TEFAS_FUND', source: 'TEFAS', sourceCode: f.code });
       }
 
       // 7. Gather from Macro Indicators
       const allMacro = await db.select({ code: macroIndicators.code, name: macroIndicators.name }).from(macroIndicators);
       for (const m of allMacro) {
-        await ensureAsset(m.code, m.name || m.code, 'MACRO', 'EVDS_FRED', m.code);
+        if (m.code) candidates.push({ code: m.code, name: m.name || m.code, type: 'MACRO', source: 'EVDS_FRED', sourceCode: m.code });
       }
 
-      // 8. Gather from Analyst Reports (in case any ticker wasn't in above lists)
-      const distinctReportTickers = await db
-        .select({ ticker: analystReports.ticker, assetName: analystReports.assetName, market: analystReports.market })
-        .from(analystReports)
-        .groupBy(analystReports.ticker, analystReports.assetName, analystReports.market);
+      // Process candidates in batch
+      const newAssetsToInsert: Array<{ code: string; name: string; type: string; isActive: boolean }> = [];
+      for (const c of candidates) {
+        const cleanCode = c.code.toUpperCase().trim();
+        if (!cleanCode) continue;
+        if (!assetMap.has(cleanCode)) {
+          newAssetsToInsert.push({
+            code: cleanCode,
+            name: c.name || cleanCode,
+            type: c.type,
+            isActive: true,
+          });
+          // temporary placeholder
+          assetMap.set(cleanCode, { id: 0, code: cleanCode, name: c.name || cleanCode, type: c.type });
+          newAdded++;
+        }
+      }
 
-      for (const r of distinctReportTickers) {
-        const type = r.market === 'BIST' ? 'BIST_STOCK' : r.market === 'US' ? 'US_STOCK' : r.market === 'CRYPTO' ? 'CRYPTO' : 'TEFAS_FUND';
-        await ensureAsset(r.ticker, r.assetName || r.ticker, type, 'ANALYST_RESEARCH', r.ticker);
+      // Insert new assets in chunks
+      if (newAssetsToInsert.length > 0) {
+        for (let i = 0; i < newAssetsToInsert.length; i += 100) {
+          const chunk = newAssetsToInsert.slice(i, i + 100);
+          const inserted = await db.insert(assets).values(chunk).returning();
+          for (const item of inserted) {
+            assetMap.set(item.code.toUpperCase(), { id: item.id, code: item.code, name: item.name, type: item.type });
+          }
+        }
+      }
+
+      // Create new mappings in batch
+      const newMappingsToInsert: Array<{ assetId: number; source: string; sourceCode: string }> = [];
+      for (const c of candidates) {
+        const cleanCode = c.code.toUpperCase().trim();
+        const assetRec = assetMap.get(cleanCode);
+        if (assetRec && assetRec.id > 0) {
+          const key = `${assetRec.id}_${c.source}`;
+          if (!mappingSet.has(key)) {
+            newMappingsToInsert.push({
+              assetId: assetRec.id,
+              source: c.source,
+              sourceCode: c.sourceCode || cleanCode,
+            });
+            mappingSet.add(key);
+          }
+        }
+      }
+
+      if (newMappingsToInsert.length > 0) {
+        for (let i = 0; i < newMappingsToInsert.length; i += 100) {
+          const chunk = newMappingsToInsert.slice(i, i + 100);
+          await db.insert(assetMappings).values(chunk);
+        }
       }
 
       console.log(`[AssetHubService] Registry sync completed. Total assets in registry: ${assetMap.size}, newly added: ${newAdded}`);
@@ -337,7 +352,7 @@ export class AssetHubService {
         newAdded
       };
     } catch (err: any) {
-      console.error('[AssetHubService] syncMasterAssetRegistry error:', err);
+      console.warn('[AssetHubService] syncMasterAssetRegistry notice:', err.message);
       return { success: false, totalRegistered: 0, newAdded: 0 };
     } finally {
       this.isSyncingRegistry = false;

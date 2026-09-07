@@ -80,6 +80,7 @@ export const kapDisclosures = pgTable('kap_disclosures', {
   id: serial('id').primaryKey(),
   disclosureIndex: varchar('disclosure_index', { length: 50 }).notNull().unique(),
   symbol: varchar('symbol', { length: 50 }),
+  companyName: text('company_name'),
   title: text('title').notNull(),
   publishDate: timestamp('publish_date'),
   category: varchar('category', { length: 200 }),
@@ -88,6 +89,8 @@ export const kapDisclosures = pgTable('kap_disclosures', {
   hasAttachment: boolean('has_attachment').default(false),
   attachmentUrls: jsonb('attachment_urls'), // array of urls e.g., ["url1.pdf", "url2.xls"]
   relatedCompanies: jsonb('related_companies'), // array of strings
+  impactLevel: varchar('impact_level', { length: 30 }), // 'LOW', 'MEDIUM', 'HIGH', 'VERY_HIGH'
+  sentiment: varchar('sentiment', { length: 30 }), // 'POSITIVE', 'NEGATIVE', 'NEUTRAL'
   url: text('url'),
   createdAt: timestamp('created_at').defaultNow(),
 });
@@ -186,14 +189,75 @@ export const bistStocks = pgTable('bist_stocks', {
   id: serial('id').primaryKey(),
   ticker: varchar('ticker', { length: 20 }).notNull().unique(), // e.g., THYAO
   companyName: text('company_name'),
+  sector: text('sector'),
   price: numeric('price', { precision: 12, scale: 4 }),
   changePct: numeric('change_pct', { precision: 8, scale: 4 }),
   marketCap: numeric('market_cap', { precision: 20, scale: 4 }),
   volume: numeric('volume', { precision: 20, scale: 4 }),
   peRatio: numeric('pe_ratio', { precision: 10, scale: 4 }),
+  pbRatio: numeric('pb_ratio', { precision: 10, scale: 4 }),
+  evEbitda: numeric('ev_ebitda', { precision: 10, scale: 4 }),
+  netDebtEbitda: numeric('net_debt_ebitda', { precision: 10, scale: 4 }),
+  currentRatio: numeric('current_ratio', { precision: 10, scale: 4 }),
+  roe: numeric('roe', { precision: 10, scale: 4 }),
+  dividendYield: numeric('dividend_yield', { precision: 10, scale: 4 }),
+  beta5y: numeric('beta_5y', { precision: 10, scale: 4 }),
+  moneyInflowNetTry: numeric('money_inflow_net_try', { precision: 24, scale: 2 }),
+  topBuyers: jsonb('top_buyers'),
+  topSellers: jsonb('top_sellers'),
   fiftyTwoWeekHigh: numeric('fifty_two_week_high', { precision: 12, scale: 4 }),
   fiftyTwoWeekLow: numeric('fifty_two_week_low', { precision: 12, scale: 4 }),
   lastUpdated: timestamp('last_updated').defaultNow(),
+});
+
+// --- BIST FİNANSALLAR & BİLANÇO KALEMLERİ (36 SÜTUN KAP/TEMEL ANALİZ VERİTABANI) ---
+export const bistFinancials = pgTable('bist_financials', {
+  id: serial('id').primaryKey(),
+  ticker: varchar('ticker', { length: 20 }).notNull(), // e.g., THYAO, EREGL, SISE
+  year: integer('year').notNull(),
+  period: integer('period').notNull(), // 3, 6, 9, 12
+  announcedDate: varchar('announced_date', { length: 30 }),
+  revenue: numeric('revenue', { precision: 24, scale: 2 }),
+  revenueYoy: numeric('revenue_yoy', { precision: 10, scale: 4 }),
+  grossProfit: numeric('gross_profit', { precision: 24, scale: 2 }),
+  grossMargin: numeric('gross_margin', { precision: 10, scale: 4 }),
+  operatingProfit: numeric('operating_profit', { precision: 24, scale: 2 }),
+  operatingMargin: numeric('operating_margin', { precision: 10, scale: 4 }),
+  ebitda: numeric('ebitda', { precision: 24, scale: 2 }),
+  ebitdaMargin: numeric('ebitda_margin', { precision: 10, scale: 4 }),
+  netProfit: numeric('net_profit', { precision: 24, scale: 2 }),
+  netProfitYoy: numeric('net_profit_yoy', { precision: 10, scale: 4 }),
+  netMargin: numeric('net_margin', { precision: 10, scale: 4 }),
+  totalAssets: numeric('total_assets', { precision: 24, scale: 2 }),
+  currentAssets: numeric('current_assets', { precision: 24, scale: 2 }),
+  shortTermLiabilities: numeric('short_term_liabilities', { precision: 24, scale: 2 }),
+  longTermLiabilities: numeric('long_term_liabilities', { precision: 24, scale: 2 }),
+  netDebt: numeric('net_debt', { precision: 24, scale: 2 }),
+  equity: numeric('equity', { precision: 24, scale: 2 }),
+  workingCapital: numeric('working_capital', { precision: 24, scale: 2 }),
+  freeCashFlow: numeric('free_cash_flow', { precision: 24, scale: 2 }),
+  operatingCashFlow: numeric('operating_cash_flow', { precision: 24, scale: 2 }),
+  capex: numeric('capex', { precision: 24, scale: 2 }),
+  paidCapital: numeric('paid_capital', { precision: 24, scale: 2 }),
+  retainedEarnings: numeric('retained_earnings', { precision: 24, scale: 2 }),
+  disclosureId: varchar('disclosure_id', { length: 50 }),
+  rawData: jsonb('raw_data'),
+  createdAt: timestamp('created_at').defaultNow(),
+});
+
+// --- ŞİRKET HİSSE GERİ ALIMLARI (SHARE BUYBACKS) ---
+export const bistBuybacks = pgTable('bist_buybacks', {
+  id: serial('id').primaryKey(),
+  ticker: varchar('ticker', { length: 20 }).notNull(), // e.g. THYAO, SISE, SAHOL
+  date: varchar('date', { length: 30 }).notNull(), // YYYY-MM-DD
+  sharesBought: numeric('shares_bought', { precision: 24, scale: 2 }),
+  pricePaid: numeric('price_paid', { precision: 16, scale: 4 }),
+  totalTry: numeric('total_try', { precision: 24, scale: 2 }),
+  cumulativeShares: numeric('cumulative_shares', { precision: 24, scale: 2 }),
+  percentageOfCapital: numeric('percentage_of_capital', { precision: 10, scale: 4 }),
+  programAuthorizedTry: numeric('program_authorized_try', { precision: 24, scale: 2 }),
+  disclosureId: varchar('disclosure_id', { length: 50 }),
+  createdAt: timestamp('created_at').defaultNow(),
 });
 
 export const macroIndicators = pgTable('macro_indicators', {
@@ -313,6 +377,17 @@ export const ipos = pgTable('ipos', {
   breakDate: varchar('break_date', { length: 50 }),
   totalReturnPct: varchar('total_return_pct', { length: 50 }),
   tradingDays: integer('trading_days'),
+  offerPrice: numeric('offer_price', { precision: 12, scale: 4 }),
+  totalShares: numeric('total_shares', { precision: 24, scale: 2 }),
+  ipoSizeTry: numeric('ipo_size_try', { precision: 24, scale: 2 }),
+  dates: varchar('dates', { length: 150 }),
+  distributionType: varchar('distribution_type', { length: 100 }),
+  consortiumLeader: text('consortium_leader'),
+  bistMarket: varchar('bist_market', { length: 100 }),
+  peRatioIpo: numeric('pe_ratio_ipo', { precision: 10, scale: 4 }),
+  prospectusUrl: text('prospectus_url'),
+  fundUsageJson: jsonb('fund_usage_json'),
+  allotmentResult: jsonb('allotment_result'),
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
 });

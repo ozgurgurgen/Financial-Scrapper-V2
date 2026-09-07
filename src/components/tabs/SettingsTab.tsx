@@ -214,7 +214,7 @@ export default function SettingsTab() {
         summarizeLargeDocs: true,
         largeDocMinLength: 1000,
         provider: 'gemini',
-        geminiModel: 'gemini-3.8-flash',
+        geminiModel: 'gemini-2.5-flash',
         localUrl: 'http://localhost:11434/api/generate',
         localModel: 'llama3',
         openrouterModel: 'meta-llama/llama-3.1-8b-instruct',
@@ -814,13 +814,13 @@ export default function SettingsTab() {
                     <div>
                       <label className="block text-sm font-semibold text-neutral-700 dark:text-neutral-300 mb-1.5">Model Seçimi</label>
                       <select
-                        value={settings['ai_settings']?.geminiModel || 'gemini-3.8-flash'}
+                        value={settings['ai_settings']?.geminiModel || 'gemini-2.5-flash'}
                         onChange={(e) => setSettings(prev => ({ ...prev, ai_settings: { ...(prev.ai_settings || {}), geminiModel: e.target.value } }))}
                         className="w-full bg-white dark:bg-neutral-900 border border-neutral-300 dark:border-neutral-700 rounded-lg px-4 py-2.5 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
                       >
-                        <option value="gemini-3.8-flash">gemini-3.8-flash (En Güncel & Hızlı)</option>
-                        <option value="gemini-2.5-flash">gemini-2.5-flash (Varsayılan Flash)</option>
-                        <option value="gemini-2.5-pro">gemini-2.5-pro (Yüksek Mantık ve Analiz)</option>
+                        <option value="gemini-2.5-flash">gemini-2.5-flash (Önerilen, Hızlı & Kararlı)</option>
+                        <option value="gemini-2.5-pro">gemini-2.5-pro (Kapsamlı Mantık ve Finansal Analiz)</option>
+                        <option value="gemini-3.8-flash">gemini-3.8-flash (Deneysel)</option>
                         <option value="gemini-flash-latest">gemini-flash-latest</option>
                       </select>
                     </div>
@@ -957,6 +957,12 @@ export default function SettingsTab() {
 
                 {settings['ai_settings']?.provider === '9router' && (
                   <div className="space-y-4 p-4 bg-neutral-50 dark:bg-neutral-800/40 rounded-xl border border-neutral-200 dark:border-neutral-700/60">
+                    <div className="p-3 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800/60 rounded-lg text-xs text-amber-800 dark:text-amber-300 space-y-1">
+                      <p className="font-semibold">💡 Bulut Ortamı Notu:</p>
+                      <p>
+                        Uygulama bulut sunucusunda çalıştığında <code>localhost</code> adresi bulut konteynerini hedefler. Kendi bilgisayarınızdaki 9router proxy'sine bağlanmak için Ngrok, Cloudflare Tunnel URL'si veya harici IP adresinizi kullanınız. Proxy ulaşılamadığında sistem kesintisiz olarak Google Gemini yedek motoruna otomatik geçer.
+                      </p>
+                    </div>
                     <div>
                       <label className="block text-sm font-semibold text-neutral-700 dark:text-neutral-300 mb-1.5">9router Endpoint URL</label>
                       <input 
@@ -987,11 +993,24 @@ export default function SettingsTab() {
                         className="w-full bg-white dark:bg-neutral-900 border border-neutral-300 dark:border-neutral-700 rounded-lg px-4 py-2.5 text-sm font-mono focus:ring-2 focus:ring-rose-500 outline-none"
                       />
                     </div>
+                    <button
+                      type="button"
+                      onClick={() => setSettings(prev => ({ ...prev, ai_settings: { ...(prev.ai_settings || {}), provider: 'gemini', geminiModel: 'gemini-2.5-flash' } }))}
+                      className="text-xs text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1 font-medium"
+                    >
+                      ← Google Gemini (Dahili Sunucu Motoru)'na Geç
+                    </button>
                   </div>
                 )}
 
                 {settings['ai_settings']?.provider === 'local' && (
                   <div className="space-y-4 p-4 bg-neutral-50 dark:bg-neutral-800/40 rounded-xl border border-neutral-200 dark:border-neutral-700/60">
+                    <div className="p-3 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800/60 rounded-lg text-xs text-amber-800 dark:text-amber-300 space-y-1">
+                      <p className="font-semibold">💡 Bulut Ortamı Notu:</p>
+                      <p>
+                        Kendi bilgisayarınızdaki Ollama'ya buluttan erişmek için Ngrok veya genel IP adresi kullanabilirsiniz. Bağlantı sağlanamazsa sistem otomatik Gemini yedek motoruna geçer.
+                      </p>
+                    </div>
                     <div>
                       <label className="block text-sm font-semibold text-neutral-700 dark:text-neutral-300 mb-1.5">Yerel Sunucu Endpoint (Ollama / Local API)</label>
                       <input 
@@ -1013,6 +1032,13 @@ export default function SettingsTab() {
                         className="w-full bg-white dark:bg-neutral-900 border border-neutral-300 dark:border-neutral-700 rounded-lg px-4 py-2.5 text-sm font-mono focus:ring-2 focus:ring-teal-500 outline-none"
                       />
                     </div>
+                    <button
+                      type="button"
+                      onClick={() => setSettings(prev => ({ ...prev, ai_settings: { ...(prev.ai_settings || {}), provider: 'gemini', geminiModel: 'gemini-2.5-flash' } }))}
+                      className="text-xs text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1 font-medium"
+                    >
+                      ← Google Gemini (Dahili Sunucu Motoru)'na Geç
+                    </button>
                   </div>
                 )}
               </div>

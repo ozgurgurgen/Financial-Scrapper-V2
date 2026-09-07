@@ -13,6 +13,7 @@ export interface LLMConfig {
   customEndpoint?: string;
   endpointUrl?: string;
   temperature?: number;
+  strict?: boolean;
 }
 
 export type ActiveAIConfig = LLMConfig;
@@ -102,6 +103,7 @@ export class MultiLLMService {
       prompt: string;
       systemInstruction?: string;
       temperature?: number;
+      strict?: boolean;
       overrideConfig?: Partial<LLMConfig>;
     },
     configOverride?: Partial<LLMConfig>
@@ -116,90 +118,120 @@ export class MultiLLMService {
       config.customEndpoint = config.endpointUrl;
     }
     const temp = params.temperature ?? config.temperature ?? 0.3;
+    const isStrict = params.strict || config.strict || false;
 
-    switch (config.provider) {
-      case 'openai':
-        return this.callOpenAICompatible({
-          endpoint: config.customEndpoint || 'https://api.openai.com/v1/chat/completions',
-          apiKey: config.apiKey || process.env.OPENAI_API_KEY || '',
-          model: config.model || 'gpt-4o-mini',
-          prompt: params.prompt,
-          systemInstruction: params.systemInstruction,
-          temperature: temp,
-        });
+    const executeProvider = async (cfg: typeof config) => {
+      switch (cfg.provider) {
+        case 'openai':
+          return await this.callOpenAICompatible({
+            endpoint: cfg.customEndpoint || 'https://api.openai.com/v1/chat/completions',
+            apiKey: cfg.apiKey || process.env.OPENAI_API_KEY || '',
+            model: cfg.model || 'gpt-4o-mini',
+            prompt: params.prompt,
+            systemInstruction: params.systemInstruction,
+            temperature: temp,
+          });
 
-      case 'anthropic':
-        return this.callAnthropic({
-          apiKey: config.apiKey || process.env.ANTHROPIC_API_KEY || '',
-          model: config.model || 'claude-3-5-sonnet-20241022',
-          prompt: params.prompt,
-          systemInstruction: params.systemInstruction,
-          temperature: temp,
-        });
+        case 'anthropic':
+          return await this.callAnthropic({
+            apiKey: cfg.apiKey || process.env.ANTHROPIC_API_KEY || '',
+            model: cfg.model || 'claude-3-5-sonnet-20241022',
+            prompt: params.prompt,
+            systemInstruction: params.systemInstruction,
+            temperature: temp,
+          });
 
-      case 'deepseek':
-        return this.callOpenAICompatible({
-          endpoint: 'https://api.deepseek.com/v1/chat/completions',
-          apiKey: config.apiKey || process.env.DEEPSEEK_API_KEY || '',
-          model: config.model || 'deepseek-chat',
-          prompt: params.prompt,
-          systemInstruction: params.systemInstruction,
-          temperature: temp,
-        });
+        case 'deepseek':
+          return await this.callOpenAICompatible({
+            endpoint: 'https://api.deepseek.com/v1/chat/completions',
+            apiKey: cfg.apiKey || process.env.DEEPSEEK_API_KEY || '',
+            model: cfg.model || 'deepseek-chat',
+            prompt: params.prompt,
+            systemInstruction: params.systemInstruction,
+            temperature: temp,
+          });
 
-      case 'groq':
-        return this.callOpenAICompatible({
-          endpoint: 'https://api.groq.com/openai/v1/chat/completions',
-          apiKey: config.apiKey || process.env.GROQ_API_KEY || '',
-          model: config.model || 'llama-3.3-70b-versatile',
-          prompt: params.prompt,
-          systemInstruction: params.systemInstruction,
-          temperature: temp,
-        });
+        case 'groq':
+          return await this.callOpenAICompatible({
+            endpoint: 'https://api.groq.com/openai/v1/chat/completions',
+            apiKey: cfg.apiKey || process.env.GROQ_API_KEY || '',
+            model: cfg.model || 'llama-3.3-70b-versatile',
+            prompt: params.prompt,
+            systemInstruction: params.systemInstruction,
+            temperature: temp,
+          });
 
-      case 'openrouter':
-        return this.callOpenAICompatible({
-          endpoint: 'https://openrouter.ai/api/v1/chat/completions',
-          apiKey: config.apiKey || process.env.OPENROUTER_API_KEY || '',
-          model: config.model || 'meta-llama/llama-3.3-70b-instruct',
-          prompt: params.prompt,
-          systemInstruction: params.systemInstruction,
-          temperature: temp,
-          extraHeaders: {
-            'HTTP-Referer': 'https://aistudio.google.com',
-            'X-Title': 'Financial Dashboard',
-          }
-        });
+        case 'openrouter':
+          return await this.callOpenAICompatible({
+            endpoint: 'https://openrouter.ai/api/v1/chat/completions',
+            apiKey: cfg.apiKey || process.env.OPENROUTER_API_KEY || '',
+            model: cfg.model || 'meta-llama/llama-3.3-70b-instruct',
+            prompt: params.prompt,
+            systemInstruction: params.systemInstruction,
+            temperature: temp,
+            extraHeaders: {
+              'HTTP-Referer': 'https://aistudio.google.com',
+              'X-Title': 'Financial Dashboard',
+            }
+          });
 
-      case 'local':
-        return this.callLocalOllama({
-          endpoint: config.customEndpoint || 'http://localhost:11434/api/generate',
-          model: config.model || 'llama3',
-          prompt: params.prompt,
-          systemInstruction: params.systemInstruction,
-          temperature: temp,
-        });
+        case 'local':
+          return await this.callLocalOllama({
+            endpoint: cfg.customEndpoint || 'http://localhost:11434/api/generate',
+            model: cfg.model || 'llama3',
+            prompt: params.prompt,
+            systemInstruction: params.systemInstruction,
+            temperature: temp,
+          });
 
-      case '9router':
-      case 'custom':
-        return this.callOpenAICompatible({
-          endpoint: config.customEndpoint || 'http://localhost:4000/v1/chat/completions',
-          apiKey: config.apiKey || 'dummy',
-          model: config.model || 'default',
-          prompt: params.prompt,
-          systemInstruction: params.systemInstruction,
-          temperature: temp,
-        });
+        case '9router':
+        case 'custom':
+          return await this.callOpenAICompatible({
+            endpoint: cfg.customEndpoint || 'http://localhost:4000/v1/chat/completions',
+            apiKey: cfg.apiKey || 'dummy',
+            model: cfg.model || 'default',
+            prompt: params.prompt,
+            systemInstruction: params.systemInstruction,
+            temperature: temp,
+          });
 
-      case 'gemini':
-      default:
-        return this.callGemini({
-          apiKey: config.apiKey || process.env.GEMINI_API_KEY || '',
-          model: config.model || 'gemini-2.5-flash',
-          prompt: params.prompt,
-          systemInstruction: params.systemInstruction,
-          temperature: temp,
-        });
+        case 'gemini':
+        default:
+          return await this.callGemini({
+            apiKey: cfg.apiKey || process.env.GEMINI_API_KEY || '',
+            model: cfg.model || 'gemini-2.5-flash',
+            prompt: params.prompt,
+            systemInstruction: params.systemInstruction,
+            temperature: temp,
+          });
+      }
+    };
+
+    try {
+      return await executeProvider(config);
+    } catch (err: any) {
+      if (isStrict) {
+        throw err;
+      }
+
+      // Resilient automatic failover to Google Gemini
+      if (config.provider !== 'gemini' && process.env.GEMINI_API_KEY) {
+        console.warn(`[MultiLLMService] Sağlayıcı '${config.provider}' başarısız oldu (${err.message}). Otomatik Gemini yedek motoruna geçiliyor...`);
+        try {
+          return await this.callGemini({
+            apiKey: process.env.GEMINI_API_KEY,
+            model: 'gemini-2.5-flash',
+            prompt: params.prompt,
+            systemInstruction: params.systemInstruction,
+            temperature: temp,
+          });
+        } catch (geminiErr: any) {
+          console.error('[MultiLLMService] Gemini yedek motoru da başarısız oldu:', geminiErr.message);
+          throw err;
+        }
+      }
+
+      throw err;
     }
   }
 
@@ -260,21 +292,31 @@ export class MultiLLMService {
       headers['Authorization'] = `Bearer ${params.apiKey}`;
     }
 
-    const res = await axios.post(
-      params.endpoint,
-      {
-        model: params.model,
-        messages,
-        temperature: params.temperature,
-      },
-      {
-        headers,
-        timeout: 60000,
-      }
-    );
+    try {
+      const res = await axios.post(
+        params.endpoint,
+        {
+          model: params.model,
+          messages,
+          temperature: params.temperature,
+        },
+        {
+          headers,
+          timeout: 15000,
+        }
+      );
 
-    const text = res.data?.choices?.[0]?.message?.content;
-    return text || 'Boş yanıt döndü.';
+      const text = res.data?.choices?.[0]?.message?.content;
+      return text || 'Boş yanıt döndü.';
+    } catch (err: any) {
+      if (err.code === 'ECONNREFUSED' || err.message?.includes('ECONNREFUSED')) {
+        throw new Error(`${params.endpoint} adresine bağlanılamadı (ECONNREFUSED). Bulut ortamında 'localhost' sunucuyu gösterir. Kendi makineniz için genel IP veya tünel (ngrok vb.) kullanmalısınız.`);
+      }
+      if (err.code === 'ECONNABORTED' || err.message?.includes('timeout')) {
+        throw new Error(`${params.endpoint} 15 saniye içinde yanıt vermedi (Zaman aşımı).`);
+      }
+      throw err;
+    }
   }
 
   private async callAnthropic(params: {
@@ -288,27 +330,34 @@ export class MultiLLMService {
       throw new Error('Anthropic API anahtarı belirtilmemiş. Lütfen Ayarlar sayfasından Anthropic API anahtarınızı girin.');
     }
 
-    const res = await axios.post(
-      'https://api.anthropic.com/v1/messages',
-      {
-        model: params.model,
-        max_tokens: 4096,
-        system: params.systemInstruction,
-        messages: [{ role: 'user', content: params.prompt }],
-        temperature: params.temperature,
-      },
-      {
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': params.apiKey,
-          'anthropic-version': '2023-06-01',
+    try {
+      const res = await axios.post(
+        'https://api.anthropic.com/v1/messages',
+        {
+          model: params.model,
+          max_tokens: 4096,
+          system: params.systemInstruction,
+          messages: [{ role: 'user', content: params.prompt }],
+          temperature: params.temperature,
         },
-        timeout: 60000,
-      }
-    );
+        {
+          headers: {
+            'Content-Type': 'application/json',
+            'x-api-key': params.apiKey,
+            'anthropic-version': '2023-06-01',
+          },
+          timeout: 20000,
+        }
+      );
 
-    const block = res.data?.content?.[0];
-    return block?.text || 'Boş yanıt döndü.';
+      const block = res.data?.content?.[0];
+      return block?.text || 'Boş yanıt döndü.';
+    } catch (err: any) {
+      if (err.code === 'ECONNABORTED' || err.message?.includes('timeout')) {
+        throw new Error('Anthropic servisi zaman aşımına uğradı.');
+      }
+      throw err;
+    }
   }
 
   private async callLocalOllama(params: {
@@ -322,23 +371,33 @@ export class MultiLLMService {
       ? `System: ${params.systemInstruction}\n\nUser: ${params.prompt}` 
       : params.prompt;
 
-    const res = await axios.post(
-      params.endpoint,
-      {
-        model: params.model,
-        prompt: fullPrompt,
-        stream: false,
-        options: {
-          temperature: params.temperature,
+    try {
+      const res = await axios.post(
+        params.endpoint,
+        {
+          model: params.model,
+          prompt: fullPrompt,
+          stream: false,
+          options: {
+            temperature: params.temperature,
+          }
+        },
+        {
+          headers: { 'Content-Type': 'application/json' },
+          timeout: 15000,
         }
-      },
-      {
-        headers: { 'Content-Type': 'application/json' },
-        timeout: 60000,
-      }
-    );
+      );
 
-    return res.data?.response || res.data?.message?.content || 'Boş yanıt döndü.';
+      return res.data?.response || res.data?.message?.content || 'Boş yanıt döndü.';
+    } catch (err: any) {
+      if (err.code === 'ECONNREFUSED' || err.message?.includes('ECONNREFUSED')) {
+        throw new Error(`${params.endpoint} yerel Ollama servisine bağlanılamadı (ECONNREFUSED).`);
+      }
+      if (err.code === 'ECONNABORTED' || err.message?.includes('timeout')) {
+        throw new Error(`${params.endpoint} yerel Ollama servisi 15 saniye içinde yanıt vermedi.`);
+      }
+      throw err;
+    }
   }
 }
 
