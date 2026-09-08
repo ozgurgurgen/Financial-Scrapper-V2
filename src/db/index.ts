@@ -1,4 +1,5 @@
 import { drizzle } from 'drizzle-orm/node-postgres';
+import { sql } from 'drizzle-orm';
 import { Pool } from 'pg';
 import * as schema from './schema.ts';
 export { schema };
@@ -229,11 +230,18 @@ export const importDatabaseFromJson = async (data: Record<string, any[]>): Promi
           }
           return parsedRow;
         });
-        await defaultDb.insert(table as any).values(chunk).onConflictDoNothing();
+        await currentDb.insert(table as any).values(chunk).onConflictDoNothing();
         inserted += chunk.length;
       }
       tableStats[tableName] = inserted;
       totalRows += inserted;
+
+      // Synchronize PostgreSQL sequence if the table uses serial primary key
+      try {
+        await currentPool.query(`SELECT setval(pg_get_serial_sequence('"${tableName}"', 'id'), COALESCE(max(id), 1), max(id) IS NOT null) FROM "${tableName}"`);
+      } catch {
+        // Sequence does not exist for non-serial PK tables, safe to ignore
+      }
     } catch (e: any) {
       errors.push(`Table ${tableName} import error: ${e.message}`);
     }
@@ -322,7 +330,7 @@ export const syncFromCloudToLocal = async (options: SyncOptions = {}): Promise<S
 
       // Synchronize PostgreSQL sequence if the table uses serial primary key
       try {
-        await currentPool.query(`SELECT setval(pg_get_serial_sequence('"${tableName}"', 'id'), COALESCE(max(id), 1)) FROM "${tableName}"`);
+        await currentPool.query(`SELECT setval(pg_get_serial_sequence('"${tableName}"', 'id'), COALESCE(max(id), 1), max(id) IS NOT null) FROM "${tableName}"`);
       } catch {
         // Sequence does not exist for non-serial PK tables, safe to ignore
       }
@@ -402,7 +410,7 @@ export const syncFromLocalToCloud = async (options: SyncOptions = {}): Promise<S
       totalRows += insertedForTable;
 
       try {
-        await defaultPool.query(`SELECT setval(pg_get_serial_sequence('"${tableName}"', 'id'), COALESCE(max(id), 1)) FROM "${tableName}"`);
+        await defaultPool.query(`SELECT setval(pg_get_serial_sequence('"${tableName}"', 'id'), COALESCE(max(id), 1), max(id) IS NOT null) FROM "${tableName}"`);
       } catch {
         // Sequence does not exist for non-serial PK tables, safe ignore
       }
