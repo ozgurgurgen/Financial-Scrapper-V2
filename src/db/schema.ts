@@ -65,6 +65,24 @@ export const syncLogs = pgTable('sync_logs', {
   completedAt: timestamp('completed_at').defaultNow(),
 });
 
+// Kapsamlı Sistem ve Hata Logları Tablosu (Enterprise Error & Audit Logs)
+export const systemErrorLogs = pgTable('system_error_logs', {
+  id: serial('id').primaryKey(),
+  level: varchar('level', { length: 20 }).notNull().default('ERROR'), // 'FATAL', 'ERROR', 'WARN', 'INFO', 'DEBUG'
+  module: varchar('module', { length: 50 }).notNull().default('SYSTEM'), // 'DATABASE', 'API_GATEWAY', 'YAHOO_BIST', 'BINANCE_CRYPTO', 'TCMB_EVDS', 'TEFAS', 'KAP', 'SCHEDULER', 'AI_SERVICE', 'AUTH', 'TELEGRAM', 'SYSTEM'
+  message: text('message').notNull(),
+  stackTrace: text('stack_trace'),
+  requestPath: varchar('request_path', { length: 255 }),
+  requestMethod: varchar('request_method', { length: 20 }),
+  clientIp: varchar('client_ip', { length: 100 }),
+  statusCode: integer('status_code'),
+  contextData: jsonb('context_data'),
+  isResolved: boolean('is_resolved').default(false).notNull(),
+  resolvedAt: timestamp('resolved_at'),
+  resolvedBy: varchar('resolved_by', { length: 100 }),
+  timestamp: timestamp('timestamp').defaultNow().notNull(),
+});
+
 // KAP ve TEFAS için gerçek veritabanı tabloları
 export const kapCompanies = pgTable('kap_companies', {
   id: serial('id').primaryKey(),

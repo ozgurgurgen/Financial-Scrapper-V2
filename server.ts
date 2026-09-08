@@ -18,6 +18,7 @@ import { CryptoAdapter } from './src/services/CryptoAdapter.ts';
 import { cryptoService } from './src/services/CryptoService.ts';
 import { marketService } from './src/services/MarketService.ts';
 import { aiService } from './src/services/AIService.ts';
+import { multiLLMService } from './src/services/MultiLLMService.ts';
 import { fiveYearSyncService } from './src/services/FiveYearSyncService.ts';
 import { bistUniverseService } from './src/services/BistUniverseService.ts';
 import { usUniverseService } from './src/services/UsUniverseService.ts';
@@ -26,8 +27,9 @@ import { automatedSchedulerService } from './src/services/AutomatedSchedulerServ
 import { kapFundScraperService } from './src/services/KAPFundScraperService.ts';
 import { kapCompanyService } from './src/services/KapCompanyService.ts';
 import { appEventBus } from './src/services/AppEventBus.ts';
+import { systemLogger } from './src/services/SystemLoggerService.ts';
 import { databaseAnalyticsService } from './src/services/DatabaseAnalyticsService.ts';
-import { db, switchDatabase, syncFromCloudToLocal } from './src/db/index.ts';
+import { db, switchDatabase, syncFromCloudToLocal, syncFromLocalToCloud, syncBidirectional, ensureDatabaseConnected } from './src/db/index.ts';
 import { 
   settings, assets, assetMappings, assetData, syncLogs, 
   kapDisclosures, tefasFunds, tefasPrices, bistStocks 
@@ -144,6 +146,25 @@ async function startServer() {
         apiKeyName: rawApiKey || 'Genel İstemci'
       });
 
+      // Automatically capture API errors and slow requests to system error logs
+      if (res.statusCode >= 500) {
+        systemLogger.error('API_GATEWAY', `${req.method} ${req.originalUrl || req.url} -> HTTP ${res.statusCode} Sunucu Hatası`, {
+          requestPath: req.originalUrl || req.url,
+          requestMethod: req.method,
+          clientIp,
+          statusCode: res.statusCode,
+          contextData: { durationMs, userAgent }
+        }).catch(() => {});
+      } else if (durationMs > 5000 && !req.path.includes('/stream') && !req.path.includes('/events')) {
+        systemLogger.warn('API_GATEWAY', `Yavaş API Yanıtı (${durationMs}ms): ${req.method} ${req.originalUrl || req.url}`, {
+          requestPath: req.originalUrl || req.url,
+          requestMethod: req.method,
+          clientIp,
+          statusCode: res.statusCode,
+          contextData: { durationMs }
+        }).catch(() => {});
+      }
+
       return (originalEnd as any).apply(res, arguments);
     };
 
@@ -151,6 +172,132 @@ async function startServer() {
   });
 
   // --- API Routes ---
+
+  // --- KAPSAMLI SİSTEM & HATA LOGLAMA UÇ NOKTALARI (SYSTEM & ERROR LOGS) ---
+  app.get('/api/logs', optionalAuth, async (req: AuthRequest, res) => {
+    try {
+      const { level, module, search, isResolved, startDate, endDate, page, limit } = req.query;
+      const result = await systemLogger.getLogs({
+        level: level as any,
+        module: module as any,
+        search: search as string,
+        isResolved: isResolved === 'true' ? true : isResolved === 'false' ? false : undefined,
+        startDate: startDate as string,
+        endDate: endDate as string,
+        page: page ? Number(page) : 1,
+        limit: limit ? Number(limit) : 50,
+      });
+      res.json(result);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get('/api/logs/stats', optionalAuth, async (req: AuthRequest, res) => {
+    try {
+      const stats = await systemLogger.getStats();
+      res.json(stats);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post('/api/logs/resolve/:id', optionalAuth, async (req: AuthRequest, res) => {
+    try {
+      const id = Number(req.params.id);
+      const resolvedBy = req.body?.resolvedBy || req.user?.email || 'Admin';
+      const success = await systemLogger.resolveLog(id, resolvedBy);
+      res.json({ success, id });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post('/api/logs/clear', optionalAuth, async (req: AuthRequest, res) => {
+    try {
+      const beforeDate = req.body?.beforeDate;
+      const result = await systemLogger.clearLogs(beforeDate);
+      res.json({ success: true, ...result });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get('/api/logs/export', optionalAuth, async (req: AuthRequest, res) => {
+    try {
+      const format = (req.query.format as 'json' | 'csv') || 'json';
+      const { level, module, search } = req.query;
+      const output = await systemLogger.exportLogs(format, {
+        level: level as any,
+        module: module as any,
+        search: search as string,
+      });
+
+      if (format === 'csv') {
+        res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+        res.setHeader('Content-Disposition', `attachment; filename="sistem_hatalari_${new Date().toISOString().slice(0, 10)}.csv"`);
+        return res.send(output);
+      } else {
+        res.setHeader('Content-Type', 'application/json; charset=utf-8');
+        res.setHeader('Content-Disposition', `attachment; filename="sistem_hatalari_${new Date().toISOString().slice(0, 10)}.json"`);
+        return res.send(output);
+      }
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post('/api/logs/test', optionalAuth, async (req: AuthRequest, res) => {
+    try {
+      const level = req.body?.level || 'WARN';
+      const module = req.body?.module || 'SYSTEM';
+      const message = req.body?.message || 'Manuel test log kaydı başarıyla oluşturuldu.';
+      const item = await systemLogger.log(level, module, message, {
+        requestPath: req.originalUrl,
+        requestMethod: req.method,
+        clientIp: req.ip,
+        contextData: { trigger: 'Manual Test API', createdBy: req.user?.email || 'Admin' }
+      });
+      res.json({ success: true, item });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // İstemci / Tarayıcı (React UI, Browser Console) Hatalarını Yakalama Uç Noktası
+  app.post('/api/logs/client', async (req, res) => {
+    try {
+      const { level = 'ERROR', module = 'CLIENT_UI', message, stackTrace, contextData } = req.body || {};
+      if (!message) {
+        return res.status(400).json({ success: false, error: 'Mesaj alanı zorunludur' });
+      }
+
+      // Vite dev server websocket veya önemsiz çıktıları atla
+      const lowerMsg = String(message).toLowerCase();
+      if (
+        lowerMsg.includes('websocket') ||
+        lowerMsg.includes('closed without opened') ||
+        lowerMsg.includes('failed to connect to websocket') ||
+        lowerMsg.includes('[vite]')
+      ) {
+        return res.json({ success: true, ignored: true });
+      }
+
+      const item = await systemLogger.log(level, module, message, {
+        stackTrace,
+        requestPath: contextData?.url || '/ui',
+        requestMethod: 'CLIENT_EVENT',
+        clientIp: req.ip,
+        contextData: {
+          ...contextData,
+          reportedFrom: 'Frontend Browser Bridge',
+        }
+      });
+      res.json({ success: true, id: item.id });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
   
   // Public health check
   app.get('/api/health', (req, res) => {
@@ -289,8 +436,14 @@ async function startServer() {
       }
 
       const item = records[0];
-      const textToSummarize = item.fullText || item.title;
-      const summary = await aiService.summarizeText(textToSummarize, true);
+      const summary = await aiService.analyzeCompanyDisclosure({
+        symbol: item.symbol || undefined,
+        companyTitle: item.companyName || undefined,
+        title: item.title,
+        fullText: item.fullText || item.title,
+        category: item.category || undefined,
+        force: true
+      });
 
       if (summary) {
         await db.update(kapDisclosures)
@@ -831,7 +984,11 @@ async function startServer() {
       });
       res.json(settingsMap);
     } catch (error: any) {
-      res.status(500).json({ error: error.message });
+      console.warn('[/api/settings] Error fetching settings, returning fallback:', error.message);
+      res.json({
+        app_name: { value: 'BIST & TEFAS Terminal' },
+        app_logo: { value: '' }
+      });
     }
   });
 
@@ -866,6 +1023,27 @@ async function startServer() {
       res.json({ success: true });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
+    }
+  });
+
+  // AI Servis Bağlantı Testi (Gemini, OpenAI, Anthropic, DeepSeek, Groq, OpenRouter, 9Router, Local)
+  app.post('/api/ai/test', optionalAuth, async (req: AuthRequest, res) => {
+    try {
+      const result = await aiService.testConnection(req.body);
+      res.json(result);
+    } catch (error: any) {
+      res.status(500).json({ success: false, message: error.message || 'AI bağlantı testi başarısız oldu.' });
+    }
+  });
+
+  // Dinamik Olarak Erişilebilir AI Modellerini Listeleme (9Router, Local Ollama, OpenAI, Groq vb.)
+  app.post('/api/ai/models', optionalAuth, async (req: AuthRequest, res) => {
+    try {
+      const { provider, endpointUrl, apiKey } = req.body || {};
+      const result = await multiLLMService.fetchAvailableModels({ provider, endpointUrl, apiKey });
+      res.json(result);
+    } catch (error: any) {
+      res.status(500).json({ success: false, models: [], message: error.message || 'Modeller listelenemedi.' });
     }
   });
 
@@ -925,17 +1103,39 @@ async function startServer() {
     }
   });
 
-  // Verileri Cloud'dan Local'e Senkronize Etme
+  // Veritabanı Senkronizasyonu (Cloud -> Local, Local -> Cloud, Çift Yönlü)
   app.post('/api/settings/db/sync', optionalAuth, async (req: AuthRequest, res) => {
     try {
-      const options = req.body || {};
-      const result = await syncFromCloudToLocal(options);
+      const { 
+        direction = 'cloud_to_local', 
+        includeLargeHistory = false, 
+        maxHistoryRowsPerTable, 
+        batchSize,
+        autoInitSchema = true 
+      } = req.body || {};
+
+      let result: any;
+      let message = '';
+
+      if (direction === 'local_to_cloud') {
+        result = await syncFromLocalToCloud({ includeLargeHistory, maxHistoryRowsPerTable, batchSize, autoInitSchema });
+        message = `Local veritabanından Cloud veritabanına toplam ${result.totalRows.toLocaleString('tr-TR')} satır başarıyla aktarıldı.`;
+      } else if (direction === 'bidirectional') {
+        result = await syncBidirectional({ includeLargeHistory, maxHistoryRowsPerTable, batchSize, autoInitSchema });
+        message = `Çift yönlü senkronizasyon tamamlandı: Toplam ${result.totalRows.toLocaleString('tr-TR')} satır eşitlendi (Cloud ➔ Local: ${result.directionBreakdown?.cloudToLocal?.toLocaleString('tr-TR') || 0}, Local ➔ Cloud: ${result.directionBreakdown?.localToCloud?.toLocaleString('tr-TR') || 0}).`;
+      } else {
+        result = await syncFromCloudToLocal({ includeLargeHistory, maxHistoryRowsPerTable, batchSize, autoInitSchema });
+        message = `Cloud veritabanından Local veritabanına toplam ${result.totalRows.toLocaleString('tr-TR')} satır başarıyla aktarıldı.`;
+      }
+
       res.json({
         success: true,
-        message: `Cloud veritabanından Local veritabanına toplam ${result.totalRows.toLocaleString('tr-TR')} satır başarıyla aktarıldı.`,
+        message,
+        direction,
         totalRows: result.totalRows,
         tableStats: result.tableStats,
-        errors: result.errors
+        errors: result.errors,
+        directionBreakdown: result.directionBreakdown
       });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
@@ -948,7 +1148,8 @@ async function startServer() {
       const logs = await db.select().from(syncLogs).orderBy(desc(syncLogs.startedAt)).limit(50);
       res.json(logs);
     } catch (error: any) {
-      res.status(500).json({ error: error.message });
+      console.warn('[/api/sync/logs] Error fetching sync logs, returning fallback:', error.message);
+      res.json([]);
     }
   });
 
@@ -1851,7 +2052,7 @@ SELECT pg_size_pretty(pg_database_size(current_database())) AS current_database_
           },
           aiSelfHealingParser: {
             enabled: true,
-            model: 'gemini-2.5-flash',
+            model: 'gemini-3.8-flash',
             activeRulesCount: healingRules.length,
             rules: healingRules,
           },
@@ -2342,6 +2543,16 @@ SELECT pg_size_pretty(pg_database_size(current_database())) AS current_database_
 
     // Graceful asynchronous bootstrap after server is listening
     setTimeout(async () => {
+      try {
+        const isDbReady = await ensureDatabaseConnected(5, 2000);
+        if (!isDbReady) {
+          console.warn('[Startup] Veritabanı bağlantısı henüz hazır değil, arka plan görevleri ertelendi.');
+          return;
+        }
+      } catch (e: any) {
+        console.warn('[Startup] Veritabanı hazırlık uyarısı:', e.message);
+      }
+
       try {
         await comprehensiveDataService.initializeSeedData();
       } catch (e: any) {

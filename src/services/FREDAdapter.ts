@@ -1,4 +1,4 @@
-import { DataSourceAdapter, SyncResult } from './DataSourceAdapter.ts';
+import type { DataSourceAdapter, SyncResult } from './DataSourceAdapter.ts';
 import { syncManager } from './SyncManager.ts';
 import { db } from '../db/index.ts';
 import { settings } from '../db/schema.ts';
@@ -41,34 +41,67 @@ export class FREDAdapter implements DataSourceAdapter {
 
       for (const s of FRED_SERIES) {
         const fredUrl = `https://api.stlouisfed.org/fred/series/observations?series_id=${s.code}&api_key=${fredKey}&file_type=json&observation_start=${startDateStr}&sort_order=desc`;
-        const response = await fetch(fredUrl);
         
-        if (!response.ok) {
-           console.error(`FRED API error for ${s.code}: ${response.status}`);
+        let response: Response | null = null;
+        let lastStatus: number | string = 'Bilinmiyor';
+
+        // Geçici 5xx veya ağ dalgalanmalarına karşı 2 defa yeniden deneme mekanizması
+        for (let attempt = 1; attempt <= 3; attempt++) {
+          try {
+            response = await fetch(fredUrl, {
+              headers: {
+                'User-Agent': 'BIST-Finance-Dashboard/1.0 (Node.js; FRED Sync)',
+                'Accept': 'application/json'
+              }
+            });
+            lastStatus = response.status;
+            if (response.ok) {
+              break;
+            }
+            // 500, 502, 503, 504 veya 429 durumlarında kısa bir bekleme ile tekrar dene
+            if ((response.status >= 500 || response.status === 429) && attempt < 3) {
+              await new Promise((resolve) => setTimeout(resolve, attempt * 1500));
+            } else {
+              break;
+            }
+          } catch (fetchErr: any) {
+            lastStatus = fetchErr?.message || 'NetworkError';
+            if (attempt < 3) {
+              await new Promise((resolve) => setTimeout(resolve, attempt * 1500));
+            }
+          }
+        }
+        
+        if (!response || !response.ok) {
+           console.warn(`[FREDAdapter] FRED API servisi ${s.code} için geçici olarak yanıt vermedi (${lastStatus}). Mevcut veriler korunuyor.`);
            continue;
         }
         
-        const data = await response.json();
-        if (data.observations && data.observations.length > 0) {
-          const rows = data.observations
-            .filter((obs: any) => obs.value !== '.' && !isNaN(parseFloat(obs.value)))
-            .map((obs: any) => ({
-              normalizedValue: parseFloat(obs.value),
-              datePeriod: obs.date,
-              rawData: obs
-            }));
+        try {
+          const data = await response.json();
+          if (data.observations && data.observations.length > 0) {
+            const rows = data.observations
+              .filter((obs: any) => obs.value !== '.' && !isNaN(parseFloat(obs.value)))
+              .map((obs: any) => ({
+                normalizedValue: parseFloat(obs.value),
+                datePeriod: obs.date,
+                rawData: obs
+              }));
 
-          if (rows.length > 0) {
-            const inserted = await syncManager.resolveAndStoreBatch(
-              this.sourceName,
-              s.code,
-              s.name,
-              'MACRO',
-              s.code,
-              rows
-            );
-            recordsProcessed += inserted;
+            if (rows.length > 0) {
+              const inserted = await syncManager.resolveAndStoreBatch(
+                this.sourceName,
+                s.code,
+                s.name,
+                'MACRO',
+                s.code,
+                rows
+              );
+              recordsProcessed += inserted;
+            }
           }
+        } catch (jsonErr: any) {
+          console.warn(`[FREDAdapter] ${s.code} veri ayrıştırma uyarısı:`, jsonErr?.message || jsonErr);
         }
       }
 

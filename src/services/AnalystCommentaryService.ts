@@ -497,7 +497,7 @@ Lütfen aşağıdaki JSON şemasına uygun olarak yanıt ver. Markdown kod blokl
       const settings = await aiService.getSettings();
       let responseText = '';
 
-      if (settings.enabled) {
+      if (settings.enabled && !aiService.isQuotaCoolingDown()) {
         try {
           responseText = await multiLLMService.generateText({
             prompt,

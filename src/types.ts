@@ -21,6 +21,7 @@ export type TabType =
   | 'us'
   | 'api'
   | 'api-charts'
+  | 'system-logs'
   | 'db_stocks'
   | 'settings'
   | 'assets'

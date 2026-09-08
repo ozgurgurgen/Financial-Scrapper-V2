@@ -164,8 +164,33 @@ export async function fetchAndStoreMacroData() {
     try {
       for (const s of FRED_SERIES) {
         const fredUrl = `https://api.stlouisfed.org/fred/series/observations?series_id=${s.code}&api_key=${fredKey}&file_type=json&sort_order=desc&limit=1`;
-        const response = await fetch(fredUrl);
-        if (response.ok) {
+        let response: Response | null = null;
+        let lastStatus: number | string = 'Bilinmiyor';
+
+        for (let attempt = 1; attempt <= 3; attempt++) {
+          try {
+            response = await fetch(fredUrl, {
+              headers: {
+                'User-Agent': 'BIST-Finance-Dashboard/1.0 (Node.js; Macro Sync)',
+                'Accept': 'application/json'
+              }
+            });
+            lastStatus = response.status;
+            if (response.ok) break;
+            if ((response.status >= 500 || response.status === 429) && attempt < 3) {
+              await new Promise((resolve) => setTimeout(resolve, attempt * 1200));
+            } else {
+              break;
+            }
+          } catch (fetchErr: any) {
+            lastStatus = fetchErr?.message || 'NetworkError';
+            if (attempt < 3) {
+              await new Promise((resolve) => setTimeout(resolve, attempt * 1200));
+            }
+          }
+        }
+
+        if (response && response.ok) {
           const data = await response.json();
           if (data.observations && data.observations.length > 0) {
             const obs = data.observations[0];
@@ -190,11 +215,11 @@ export async function fetchAndStoreMacroData() {
             syncedCount++;
           }
         } else {
-          console.error(`FRED API returned error for ${s.code}:`, response.status);
+          console.warn(`[MacroSync] FRED API servisi ${s.code} için geçici olarak yanıt vermedi (${lastStatus}). Mevcut değerler korunuyor.`);
         }
       }
-    } catch (e) {
-      console.error("Failed to fetch FRED data:", e);
+    } catch (e: any) {
+      console.warn("[MacroSync] FRED verileri alınırken geçici hata:", e?.message || e);
     }
   }
 

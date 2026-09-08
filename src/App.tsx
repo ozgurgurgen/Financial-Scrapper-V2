@@ -26,6 +26,7 @@ import UsMarketsTab from './components/tabs/UsMarketsTab';
 import AnalystReportsTab from './components/tabs/AnalystReportsTab';
 import ApiDocsTab from './components/tabs/ApiDocsTab';
 import ApiChartsTab from './components/tabs/ApiChartsTab';
+import SystemLogsTab from './components/tabs/SystemLogsTab';
 import DbStocksTab from './components/tabs/DbStocksTab';
 import SettingsTab from './components/tabs/SettingsTab';
 import AssetsTab from './components/tabs/AssetsTab';
@@ -149,6 +150,7 @@ export default function App() {
 
                 {currentTab === 'api' && <ApiDocsTab />}
                 {currentTab === 'api-charts' && <ApiChartsTab />}
+                {currentTab === 'system-logs' && <SystemLogsTab />}
 
                 {currentTab === 'db_stocks' && <DbStocksTab />}
 

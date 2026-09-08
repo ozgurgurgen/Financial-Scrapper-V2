@@ -1,12 +1,111 @@
 import React, { useState, useEffect } from 'react';
 import { 
   Search, FileText, Bot, RefreshCw, Calendar, Tag, ExternalLink, 
-  Download, Paperclip, ChevronRight, X, Sparkles, AlertCircle, Building2,
-  PieChart, FileSpreadsheet, ShieldAlert, Coins, Landmark
+  Download, Paperclip, ChevronRight, ChevronDown, ChevronUp, X, Sparkles, AlertCircle, Building2,
+  PieChart, FileSpreadsheet, ShieldAlert, Coins, Landmark, CheckCircle2, BarChart3, Lightbulb
 } from 'lucide-react';
 import { apiFetch } from '../../lib/api';
 
 type CategoryFilter = 'ALL' | 'FINANCIALS' | 'SPECIAL_EVENTS' | 'CAPITAL_DIVIDEND' | 'GOVERNANCE' | 'FUNDS';
+
+/**
+ * Beautiful, structured AI Summary formatter for BIST/KAP disclosures
+ */
+function FormattedAISummary({ text }: { text: string }) {
+  if (!text) return null;
+
+  const hasExecutiveSummary = text.includes('Yönetici Özeti') || text.includes('📌');
+  const hasFinancialImpact = text.includes('Finansal & Operasyonel Etki') || text.includes('Finansal ve Operasyonel Etki') || text.includes('📊');
+  const hasMarketComment = text.includes('Piyasa & Hisse Yorumu') || text.includes('Piyasa ve Hisse Yorumu') || text.includes('Piyasa Yorumu') || text.includes('💡');
+
+  if (hasExecutiveSummary || hasFinancialImpact || hasMarketComment) {
+    const sections: { title: string; icon: any; content: string[]; color: string }[] = [];
+    const lines = text.split('\n');
+    let currentSection: { title: string; icon: any; content: string[]; color: string } | null = null;
+
+    for (const rawLine of lines) {
+      const line = rawLine.trim();
+      if (!line) continue;
+
+      if (line.includes('Yönetici Özeti') || line.includes('📌')) {
+        if (currentSection) sections.push(currentSection);
+        const cleanTitle = line.replace(/^[#*\s📌•]+/, '').replace(/[:*#]+$/, '').trim() || 'Yönetici Özeti';
+        currentSection = {
+          title: cleanTitle,
+          icon: FileText,
+          content: [],
+          color: 'border-blue-200/80 dark:border-blue-900/40 bg-blue-50/50 dark:bg-blue-950/20 text-blue-900 dark:text-blue-300'
+        };
+      } else if (line.includes('Finansal & Operasyonel') || line.includes('Finansal ve Operasyonel') || line.includes('📊')) {
+        if (currentSection) sections.push(currentSection);
+        const cleanTitle = line.replace(/^[#*\s📊•]+/, '').replace(/[:*#]+$/, '').trim() || 'Finansal & Operasyonel Etki';
+        currentSection = {
+          title: cleanTitle,
+          icon: BarChart3,
+          content: [],
+          color: 'border-emerald-200/80 dark:border-emerald-900/40 bg-emerald-50/50 dark:bg-emerald-950/20 text-emerald-900 dark:text-emerald-300'
+        };
+      } else if (line.includes('Piyasa & Hisse') || line.includes('Piyasa ve Hisse') || line.includes('Piyasa Yorumu') || line.includes('💡')) {
+        if (currentSection) sections.push(currentSection);
+        const cleanTitle = line.replace(/^[#*\s💡•]+/, '').replace(/[:*#]+$/, '').trim() || 'Piyasa & Hisse Yorumu';
+        currentSection = {
+          title: cleanTitle,
+          icon: Lightbulb,
+          content: [],
+          color: 'border-amber-200/80 dark:border-amber-900/40 bg-amber-50/50 dark:bg-amber-950/20 text-amber-900 dark:text-amber-300'
+        };
+      } else {
+        if (currentSection) {
+          currentSection.content.push(line);
+        } else {
+          currentSection = {
+            title: 'Genel Değerlendirme',
+            icon: Sparkles,
+            content: [line],
+            color: 'border-neutral-200/80 dark:border-neutral-800 bg-neutral-50/80 dark:bg-neutral-900/50 text-neutral-900 dark:text-neutral-100'
+          };
+        }
+      }
+    }
+    if (currentSection) sections.push(currentSection);
+
+    if (sections.length > 0) {
+      return (
+        <div className="space-y-2.5">
+          {sections.map((sec, idx) => {
+            const SecIcon = sec.icon;
+            return (
+              <div key={idx} className={`p-3.5 rounded-xl border ${sec.color} space-y-1.5 transition-all`}>
+                <div className="flex items-center gap-2 text-xs font-bold tracking-wide">
+                  <SecIcon size={14} className="shrink-0" />
+                  <span>{sec.title}</span>
+                </div>
+                <div className="text-xs text-neutral-850 dark:text-neutral-200 leading-relaxed font-sans space-y-1">
+                  {sec.content.map((p, pIdx) => {
+                    const isBullet = p.startsWith('*') || p.startsWith('•') || p.startsWith('-');
+                    const cleanP = p.replace(/^[*\s•-]+/, '').trim();
+                    return (
+                      <p key={pIdx} className={isBullet ? "flex items-start gap-2 pl-1" : ""}>
+                        {isBullet && <span className="text-neutral-400 mt-1 font-bold">•</span>}
+                        <span>{cleanP}</span>
+                      </p>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      );
+    }
+  }
+
+  return (
+    <div className="p-3.5 rounded-xl border border-neutral-200/80 dark:border-neutral-800 bg-neutral-50/50 dark:bg-neutral-900/50 text-xs text-neutral-800 dark:text-neutral-200 leading-relaxed space-y-1.5 whitespace-pre-line">
+      {text}
+    </div>
+  );
+}
 
 export default function KapTab({ isDark }: { isDark: boolean }) {
   const [disclosures, setDisclosures] = useState<any[]>([]);
@@ -17,6 +116,22 @@ export default function KapTab({ isDark }: { isDark: boolean }) {
   const [selectedItem, setSelectedItem] = useState<any | null>(null);
   const [summarizingId, setSummarizingId] = useState<string | null>(null);
   const [toastMessage, setToastMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
+  const [openAccordions, setOpenAccordions] = useState<Record<string, boolean>>({});
+
+  const toggleAccordion = (index: string) => {
+    setOpenAccordions(prev => ({
+      ...prev,
+      [index]: !prev[index]
+    }));
+  };
+
+  const toggleAllAccordions = (expand: boolean) => {
+    const updated: Record<string, boolean> = {};
+    disclosures.forEach(d => {
+      updated[d.disclosureIndex] = expand;
+    });
+    setOpenAccordions(updated);
+  };
 
   useEffect(() => {
     fetchDisclosures();
@@ -223,6 +338,38 @@ export default function KapTab({ isDark }: { isDark: boolean }) {
         </div>
       </div>
 
+      {/* Disclosures Feed Header & Controls */}
+      <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
+        <div className="flex items-center gap-2">
+          <h3 className="text-xs font-bold uppercase tracking-wider text-neutral-500">
+            KAP Bildirim Akışı ({filtered.length})
+          </h3>
+          <span className="text-[11px] font-medium px-2 py-0.5 rounded-full bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 border border-amber-200 dark:border-amber-900/50 flex items-center gap-1">
+            <Sparkles size={11} />
+            {filtered.filter(f => !!f.summary).length} Yapay Zeka Yorumu Hazır
+          </span>
+        </div>
+
+        <div className="flex items-center gap-2 text-xs">
+          <button
+            type="button"
+            onClick={() => toggleAllAccordions(true)}
+            className="px-2.5 py-1 rounded-lg bg-neutral-100 dark:bg-neutral-800 hover:bg-neutral-200 dark:hover:bg-neutral-700 text-neutral-700 dark:text-neutral-300 font-medium transition-colors flex items-center gap-1"
+          >
+            <ChevronDown size={13} />
+            Tüm AI Yorumlarını Aç
+          </button>
+          <button
+            type="button"
+            onClick={() => toggleAllAccordions(false)}
+            className="px-2.5 py-1 rounded-lg bg-neutral-100 dark:bg-neutral-800 hover:bg-neutral-200 dark:hover:bg-neutral-700 text-neutral-700 dark:text-neutral-300 font-medium transition-colors flex items-center gap-1"
+          >
+            <ChevronUp size={13} />
+            Kapat
+          </button>
+        </div>
+      </div>
+
       {/* Disclosures Feed */}
       <div className="space-y-4">
         {loading ? (
@@ -244,6 +391,7 @@ export default function KapTab({ isDark }: { isDark: boolean }) {
             const badge = getCategoryBadge(group);
             const Icon = badge.icon;
             const attachments = Array.isArray(d.attachmentUrls) ? d.attachmentUrls : [];
+            const isAccordionOpen = !!openAccordions[d.disclosureIndex];
 
             return (
               <div 
@@ -301,35 +449,105 @@ export default function KapTab({ isDark }: { isDark: boolean }) {
                   </h3>
                 </div>
 
-                {/* AI Summary Card (if available) */}
-                {d.summary ? (
-                  <div className="bg-amber-50/60 dark:bg-amber-950/20 border border-amber-200/80 dark:border-amber-900/40 rounded-xl p-4 flex gap-3">
-                    <Sparkles className="text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" size={18} />
-                    <div className="space-y-1">
-                      <div className="text-[11px] font-bold text-amber-900 dark:text-amber-300 uppercase tracking-wider flex items-center gap-1.5">
-                        <span>Yapay Zeka (AI) Finansal Analiz Özeti</span>
+                {/* Interactive AI Analysis Accordion Area */}
+                <div className="pt-1">
+                  <button
+                    type="button"
+                    onClick={() => toggleAccordion(d.disclosureIndex)}
+                    className="w-full flex items-center justify-between p-3 rounded-xl bg-neutral-50/90 hover:bg-neutral-100 dark:bg-neutral-800/40 dark:hover:bg-neutral-800/70 border border-neutral-200/80 dark:border-neutral-700/60 transition-all text-left group"
+                  >
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <div className={`p-1.5 rounded-lg shrink-0 ${d.summary ? 'bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-400' : 'bg-neutral-200/70 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-400'}`}>
+                        <Sparkles size={15} className={summarizingId === d.disclosureIndex ? "animate-spin text-amber-600" : ""} />
                       </div>
-                      <p className="text-xs text-amber-950 dark:text-amber-100 leading-relaxed font-sans">
-                        {d.summary}
-                      </p>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="flex items-center justify-between pt-1">
-                    <div className="text-xs text-neutral-500 dark:text-neutral-400 line-clamp-2">
-                      {d.fullText || "Detaylı metin incele butonunda mevcuttur."}
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-xs font-bold text-neutral-900 dark:text-white">
+                            Yapay Zeka (AI) Finansal Yorumu ve Analizi
+                          </span>
+                          {d.summary ? (
+                            <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-md bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800/60">
+                              <CheckCircle2 size={10} />
+                              AI Analizi Hazır
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-md bg-blue-50 dark:bg-blue-950/50 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800/50">
+                              <Bot size={10} />
+                              Yorumu Görmek İçin Tıklayın
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-[11px] text-neutral-500 dark:text-neutral-400 truncate mt-0.5">
+                          {d.summary 
+                            ? 'Şirketin KAP bildiriminin detaylı finansal etki, bilanço ve hisse piyasa yorumunu okumak için tıklayın' 
+                            : 'Google Gemini AI motoruyla anlık finansal ve operasyonel etki analizi üretmek için tıklayın'}
+                        </p>
+                      </div>
                     </div>
 
-                    <button
-                      onClick={() => handleSummarizeOnDemand(d.disclosureIndex)}
-                      disabled={summarizingId === d.disclosureIndex}
-                      className="shrink-0 ml-4 inline-flex items-center gap-1.5 px-2.5 py-1 bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-800 rounded-lg text-xs font-medium hover:bg-amber-100 transition-colors disabled:opacity-50"
-                    >
-                      <Sparkles size={12} className={summarizingId === d.disclosureIndex ? "animate-spin" : ""} />
-                      {summarizingId === d.disclosureIndex ? "Özetleniyor..." : "AI ile Özetle"}
-                    </button>
-                  </div>
-                )}
+                    <div className="flex items-center gap-2 shrink-0 ml-3">
+                      <span className="text-xs font-semibold text-neutral-600 dark:text-neutral-300 group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">
+                        {isAccordionOpen ? 'Kapat' : 'Yorumu Oku'}
+                      </span>
+                      <div className={`w-6 h-6 rounded-full flex items-center justify-center bg-white dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 text-neutral-600 dark:text-neutral-300 transition-transform duration-200 ${isAccordionOpen ? 'rotate-180 text-blue-600 dark:text-blue-400' : ''}`}>
+                        <ChevronDown size={14} />
+                      </div>
+                    </div>
+                  </button>
+
+                  {/* Accordion Content */}
+                  {isAccordionOpen && (
+                    <div className="mt-2.5 p-4 rounded-xl bg-gradient-to-b from-amber-50/30 to-neutral-50/50 dark:from-amber-950/10 dark:to-neutral-900/40 border border-amber-200/70 dark:border-amber-900/40 space-y-3.5 animate-in fade-in slide-in-from-top-2 duration-150">
+                      {d.summary ? (
+                        <div className="space-y-3">
+                          <FormattedAISummary text={d.summary} />
+                          
+                          <div className="flex flex-wrap items-center justify-between gap-2 pt-3 border-t border-amber-200/50 dark:border-amber-900/40 text-[11px] text-neutral-500 dark:text-neutral-400">
+                            <span className="flex items-center gap-1.5 font-medium">
+                              <Bot size={13} className="text-amber-600 dark:text-amber-400" />
+                              Google Gemini / BIST Finansal Analiz Modeli
+                            </span>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleSummarizeOnDemand(d.disclosureIndex);
+                              }}
+                              disabled={summarizingId === d.disclosureIndex}
+                              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-100/80 hover:bg-amber-100 dark:bg-amber-900/40 dark:hover:bg-amber-900/60 text-amber-900 dark:text-amber-200 font-semibold text-xs transition-colors disabled:opacity-50"
+                            >
+                              <RefreshCw size={12} className={summarizingId === d.disclosureIndex ? "animate-spin" : ""} />
+                              {summarizingId === d.disclosureIndex ? "Yeniden Analiz Ediliyor..." : "Yeniden Analiz Et (AI)"}
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="p-4 rounded-xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 text-center space-y-3">
+                          <div className="w-10 h-10 mx-auto rounded-xl bg-amber-100 dark:bg-amber-950/50 text-amber-600 dark:text-amber-400 flex items-center justify-center">
+                            <Sparkles size={20} />
+                          </div>
+                          <div>
+                            <h4 className="text-xs font-bold text-neutral-900 dark:text-white">
+                              Yapay Zeka Finansal Analizi Henüz Oluşturulmadı
+                            </h4>
+                            <p className="text-[11px] text-neutral-500 dark:text-neutral-400 max-w-md mx-auto mt-1">
+                              Bu bildirim metni doğrudan KAP sunucularından alındı. Tek bir tıklamayla finansal yönetici özeti, bilanço ve operasyonel etki ile hisse piyasa yorumunu üretebilirsiniz.
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => handleSummarizeOnDemand(d.disclosureIndex)}
+                            disabled={summarizingId === d.disclosureIndex}
+                            className="inline-flex items-center gap-2 px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-semibold shadow-xs transition-colors disabled:opacity-50"
+                          >
+                            <Sparkles size={14} className={summarizingId === d.disclosureIndex ? "animate-spin" : ""} />
+                            {summarizingId === d.disclosureIndex ? "Analiz Hazırlanıyor..." : "✨ Yapay Zeka ile Şimdi Analiz Et"}
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
 
                 {/* Attachments Section */}
                 {attachments.length > 0 && (
@@ -390,31 +608,31 @@ export default function KapTab({ isDark }: { isDark: boolean }) {
             {/* Modal Body */}
             <div className="p-6 overflow-y-auto space-y-6 flex-1">
               {/* AI Summary in Modal */}
-              <div className="p-4 bg-amber-50/70 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900/50 rounded-xl space-y-2">
-                <div className="flex items-center justify-between">
+              <div className="p-4 bg-amber-50/40 dark:bg-amber-950/20 border border-amber-200/80 dark:border-amber-900/50 rounded-xl space-y-3">
+                <div className="flex items-center justify-between flex-wrap gap-2">
                   <span className="text-xs font-bold text-amber-900 dark:text-amber-300 uppercase tracking-wider flex items-center gap-1.5">
                     <Sparkles size={15} className="text-amber-600" />
-                    Yapay Zeka (AI) Rapor Özeti
+                    Yapay Zeka (AI) Finansal ve Operasyonel Analiz Raporu
                   </span>
 
                   <button
                     onClick={() => handleSummarizeOnDemand(selectedItem.disclosureIndex)}
                     disabled={summarizingId === selectedItem.disclosureIndex}
-                    className="px-3 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors disabled:opacity-50"
+                    className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-colors disabled:opacity-50"
                   >
                     <Sparkles size={13} className={summarizingId === selectedItem.disclosureIndex ? "animate-spin" : ""} />
-                    {selectedItem.summary ? "Tekrar Özetle" : "Şimdi Özetle"}
+                    {selectedItem.summary ? "Tekrar Analiz Et" : "Şimdi Analiz Et"}
                   </button>
                 </div>
 
                 {selectedItem.summary ? (
-                  <p className="text-sm text-amber-950 dark:text-amber-100 leading-relaxed font-sans whitespace-pre-line">
-                    {selectedItem.summary}
-                  </p>
+                  <FormattedAISummary text={selectedItem.summary} />
                 ) : (
-                  <p className="text-xs text-neutral-500 italic">
-                    Bu bildirim henüz özetlenmedi. "Şimdi Özetle" butonuna tıklayarak Ayarlar sayfasında seçtiğiniz Yapay Zeka modeli veya akıllı özetleme motoruyla anlık analiz alabilirsiniz.
-                  </p>
+                  <div className="p-4 text-center rounded-xl bg-white/60 dark:bg-neutral-900/60 border border-amber-200/50 dark:border-amber-900/30 space-y-2">
+                    <p className="text-xs text-neutral-600 dark:text-neutral-300">
+                      Bu bildirim henüz özetlenmedi. "Şimdi Analiz Et" butonuna tıklayarak Google Gemini finansal analiz motoruyla anlık rapor alabilirsiniz.
+                    </p>
+                  </div>
                 )}
               </div>
 

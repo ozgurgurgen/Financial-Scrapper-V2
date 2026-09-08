@@ -10,7 +10,7 @@ import { syncManager } from './SyncManager.ts';
 import { tefasHoldingsService } from './TefasHoldingsService.ts';
 import { historicalBackfillService } from './HistoricalBackfillService.ts';
 import { kapFundScraperService } from './KAPFundScraperService.ts';
-import { appEventBus, DepartmentType, ActorType } from './AppEventBus.ts';
+import { appEventBus, type DepartmentType, type ActorType } from './AppEventBus.ts';
 
 export interface ScheduledTaskInfo {
   id: string;

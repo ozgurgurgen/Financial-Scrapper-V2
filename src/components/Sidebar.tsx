@@ -28,6 +28,7 @@ import {
   Newspaper,
   Radio,
   BarChart3,
+  Terminal,
   X
 } from 'lucide-react';
 
@@ -63,21 +64,30 @@ export default function Sidebar({
   const [searchQuery, setSearchQuery] = useState<string>('');
 
   useEffect(() => {
-    const fetchSettings = async () => {
+    let isMounted = true;
+    const fetchSettings = async (retryCount = 0) => {
       try {
-        const response = await axios.get('/api/settings');
-        if (response.data) {
+        const response = await axios.get('/api/settings', { timeout: 8000 });
+        if (response.data && isMounted) {
           const nameSetting = response.data['app_name'];
           const logoSetting = response.data['app_logo'];
           
-          if (nameSetting) setAppName(nameSetting.value || nameSetting);
-          if (logoSetting) setAppLogo(logoSetting.value || logoSetting);
+          if (nameSetting) {
+            setAppName(typeof nameSetting === 'object' ? (nameSetting.value || nameSetting) : nameSetting);
+          }
+          if (logoSetting) {
+            setAppLogo(typeof logoSetting === 'object' ? (logoSetting.value || logoSetting) : logoSetting);
+          }
         }
       } catch (error) {
-        console.error('Failed to fetch app branding settings', error);
+        // Retry softly once after 3 seconds if first load was cold
+        if (retryCount < 1 && isMounted) {
+          setTimeout(() => fetchSettings(retryCount + 1), 3000);
+        }
       }
     };
     fetchSettings();
+    return () => { isMounted = false; };
   }, [currentTab]); // Refresh when tab changes to stay somewhat updated
 
   const groups: NavGroup[] = [
@@ -136,6 +146,7 @@ export default function Sidebar({
     {
       title: 'GELİŞTİRİCİ & API HUB',
       items: [
+        { id: 'system-logs', label: 'Sistem & Hata Logları', icon: <Terminal size={18} />, badge: 'DENETİM' },
         { id: 'api-charts', label: 'API Grafik & Telemetri', icon: <BarChart3 size={18} />, badge: 'GRAFİK' },
         { id: 'api', label: 'API Yönetimi & Diagnostik', icon: <Code2 size={18} />, badge: 'YÖNETİM & LOG' },
       ]

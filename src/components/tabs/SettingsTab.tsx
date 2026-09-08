@@ -1,9 +1,14 @@
 import React, { useState, useEffect } from 'react';
-import { Settings, Save, Clock, Key, Shield, Server, RefreshCw, CheckCircle2, XCircle, Activity, Sparkles, Cpu, Globe, Database, Network, Newspaper, Trash2, Sliders, Check, Radio, Bot, Send, Bell, Terminal, Zap, HardDrive } from 'lucide-react';
+import { 
+  Settings, Save, Clock, Key, Shield, Server, RefreshCw, CheckCircle2, XCircle, 
+  Activity, Sparkles, Cpu, Globe, Database, Network, Newspaper, Trash2, Sliders, 
+  Check, Radio, Bot, Send, Bell, Terminal, Zap, HardDrive, ChevronDown, Edit3, Wifi, Info 
+} from 'lucide-react';
 import { apiFetch, getAuthHeaders } from '../../lib/api';
 import DatabaseControlModal from '../modals/DatabaseControlModal';
 import DataSourceHealthSubApp from './DataSourceHealthSubApp';
 import TelegramSettingsSection from './TelegramSettingsSection';
+import ConnectionTroubleshootingGuide from '../settings/ConnectionTroubleshootingGuide';
 
 export interface NewsRetentionConfig {
   maxTotalNews: number;
@@ -39,11 +44,24 @@ export default function SettingsTab() {
   const [aiTestResult, setAiTestResult] = useState<{ success?: boolean; message?: string; output?: string } | null>(null);
   const [dbModalOpen, setDbModalOpen] = useState(false);
 
+  // Dynamic AI Model Discovery State
+  const [availableModels, setAvailableModels] = useState<string[]>([]);
+  const [loadingModels, setLoadingModels] = useState(false);
+  const [modelsSource, setModelsSource] = useState<'live' | 'preset' | null>(null);
+  const [modelsMessage, setModelsMessage] = useState<string | null>(null);
+  const [customModelMode, setCustomModelMode] = useState(false);
+
   useEffect(() => {
     fetchSettings();
     fetchNewsSettings();
     fetchSyncLogs();
   }, []);
+
+  useEffect(() => {
+    if (activeTab === 'ai') {
+      fetchModelsForProvider();
+    }
+  }, [activeTab]);
 
   const getHeaders = async () => {
     return await getAuthHeaders({ 'Content-Type': 'application/json' });
@@ -205,6 +223,145 @@ export default function SettingsTab() {
     }
   };
 
+  const fetchModelsForProvider = async (targetProvider?: string, targetUrl?: string, targetKey?: string) => {
+    const aiConfig = settings['ai_settings'] || {};
+    const provider = targetProvider || aiConfig.provider || 'gemini';
+    const endpointUrl = targetUrl !== undefined 
+      ? targetUrl 
+      : (provider === '9router' ? (aiConfig.ninerouterUrl || 'http://localhost:2165/v1/chat/completions') 
+        : (provider === 'local' ? (aiConfig.localUrl || 'http://localhost:11434/api/generate') : undefined));
+    const apiKey = targetKey !== undefined ? targetKey : (aiConfig.key || aiConfig.ninerouterKey);
+
+    try {
+      setLoadingModels(true);
+      setModelsMessage(null);
+      const res = await fetch('/api/ai/models', {
+        method: 'POST',
+        headers: await getHeaders(),
+        body: JSON.stringify({ provider, endpointUrl, apiKey })
+      });
+      const data = await res.json();
+      if (data.models && Array.isArray(data.models) && data.models.length > 0) {
+        setAvailableModels(data.models);
+        setModelsSource(data.source || 'preset');
+        setModelsMessage(data.message || null);
+
+        // If current model is not set or not in list, auto-select the first one
+        setSettings(prev => {
+          const currentAi = prev['ai_settings'] || {};
+          const currentModel = currentAi.model;
+          if (!currentModel || (!data.models.includes(currentModel) && !customModelMode)) {
+            return {
+              ...prev,
+              ai_settings: {
+                ...currentAi,
+                model: data.models[0]
+              }
+            };
+          }
+          return prev;
+        });
+      }
+    } catch (err: any) {
+      console.warn('Failed to load AI models list:', err);
+      setModelsMessage('Modeller listelenemedi, varsayılan modeller kullanılıyor.');
+    } finally {
+      setLoadingModels(false);
+    }
+  };
+
+  const handleSelectProvider = (newProvider: string) => {
+    setCustomModelMode(false);
+    setAiTestResult(null);
+
+    const prevAi = settings['ai_settings'] || {};
+
+    // Fresh, clean object without any leftover keys from other providers
+    const cleanAi: Record<string, any> = {
+      enabled: prevAi.enabled ?? true,
+      summarizeLargeDocs: prevAi.summarizeLargeDocs ?? true,
+      largeDocMinLength: prevAi.largeDocMinLength ?? 1000,
+      provider: newProvider,
+      model: '',
+    };
+
+    if (newProvider === '9router') {
+      cleanAi.ninerouterUrl = prevAi.ninerouterUrl || 'http://localhost:2165/v1/chat/completions';
+      if (prevAi.ninerouterKey) cleanAi.ninerouterKey = prevAi.ninerouterKey;
+    } else if (newProvider === 'local') {
+      cleanAi.localUrl = prevAi.localUrl || 'http://localhost:11434/api/generate';
+    } else if (newProvider === 'gemini') {
+      if (prevAi.provider === 'gemini' && prevAi.key) cleanAi.key = prevAi.key;
+    } else {
+      if (prevAi.provider === newProvider && prevAi.key) cleanAi.key = prevAi.key;
+    }
+
+    setSettings(prev => ({
+      ...prev,
+      ai_settings: cleanAi
+    }));
+
+    // Trigger immediate fetch of available models for the newly selected provider
+    fetchModelsForProvider(newProvider, cleanAi.ninerouterUrl || cleanAi.localUrl, cleanAi.key || cleanAi.ninerouterKey);
+  };
+
+  const handleSaveAiSettings = async () => {
+    try {
+      setSaving(true);
+      setMessage(null);
+      const aiConfig = settings['ai_settings'] || {};
+      const currentProvider = aiConfig.provider || 'gemini';
+      const activeModel = (aiConfig.model || '').trim() || (availableModels[0] || 'default');
+
+      // Build pristine payload with only the active provider's fields:
+      const payload: Record<string, any> = {
+        enabled: aiConfig.enabled ?? true,
+        summarizeLargeDocs: aiConfig.summarizeLargeDocs ?? true,
+        largeDocMinLength: aiConfig.largeDocMinLength ?? 1000,
+        provider: currentProvider,
+        model: activeModel,
+      };
+
+      if (currentProvider === '9router') {
+        payload.ninerouterUrl = aiConfig.ninerouterUrl || 'http://localhost:2165/v1/chat/completions';
+        if (aiConfig.ninerouterKey) payload.ninerouterKey = aiConfig.ninerouterKey;
+        payload.ninerouterModel = activeModel;
+      } else if (currentProvider === 'local') {
+        payload.localUrl = aiConfig.localUrl || 'http://localhost:11434/api/generate';
+        payload.localModel = activeModel;
+      } else if (currentProvider === 'gemini') {
+        if (aiConfig.key) payload.key = aiConfig.key;
+        payload.geminiModel = activeModel;
+      } else if (currentProvider === 'openai') {
+        if (aiConfig.key) payload.key = aiConfig.key;
+        payload.openaiModel = activeModel;
+      } else if (currentProvider === 'anthropic') {
+        if (aiConfig.key) payload.key = aiConfig.key;
+        payload.anthropicModel = activeModel;
+      } else if (currentProvider === 'deepseek') {
+        if (aiConfig.key) payload.key = aiConfig.key;
+        payload.deepseekModel = activeModel;
+      } else if (currentProvider === 'groq') {
+        if (aiConfig.key) payload.key = aiConfig.key;
+        payload.groqModel = activeModel;
+      } else if (currentProvider === 'openrouter') {
+        if (aiConfig.key) payload.key = aiConfig.key;
+        payload.openrouterModel = activeModel;
+      }
+
+      await handleSaveSetting('ai_settings', payload);
+      setMessage({
+        text: `Yapay zeka ayarları başarıyla kaydedildi (${currentProvider.toUpperCase()} - ${activeModel}).`,
+        type: 'success'
+      });
+    } catch (e: any) {
+      setMessage({ text: e.message || 'AI ayarları kaydedilemedi.', type: 'error' });
+    } finally {
+      setSaving(false);
+      setTimeout(() => setMessage(null), 3500);
+    }
+  };
+
   const testAiConnection = async () => {
     try {
       setTestingAi(true);
@@ -214,18 +371,18 @@ export default function SettingsTab() {
         summarizeLargeDocs: true,
         largeDocMinLength: 1000,
         provider: 'gemini',
-        geminiModel: 'gemini-2.5-flash',
-        localUrl: 'http://localhost:11434/api/generate',
-        localModel: 'llama3',
-        openrouterModel: 'meta-llama/llama-3.1-8b-instruct',
-        ninerouterUrl: 'http://localhost:4000/v1/chat/completions',
-        ninerouterModel: 'default'
+        model: 'gemini-3.8-flash',
       };
+
+      const activeModel = (aiConfig.model || '').trim() || availableModels[0] || 'default';
 
       const res = await fetch('/api/ai/test', {
         method: 'POST',
         headers: await getHeaders(),
-        body: JSON.stringify(aiConfig)
+        body: JSON.stringify({
+          ...aiConfig,
+          model: activeModel
+        })
       });
       const data = await res.json();
       setAiTestResult(data);
@@ -697,9 +854,12 @@ export default function SettingsTab() {
                 Yapay Zeka (AI) & Belge Özetleme
               </h3>
               <p className="text-sm text-neutral-500 mt-1">
-                KAP'tan gelen finansal raporları ve uzun bildirimleri özetlemek için yapay zeka ayarları.
+                KAP bildirimleri, haber duyarlılıkları ve finansal raporlar için çoklu LLM (Gemini, OpenAI, Claude, DeepSeek, Groq, OpenRouter, Yerel Ollama, 9router) yapılandırması.
               </p>
             </div>
+
+            {/* Comprehensive Connection & Port Guide */}
+            <ConnectionTroubleshootingGuide />
             
             <div className="space-y-5 pt-2 border-t border-neutral-100 dark:border-neutral-800">
               {/* Main AI Toggle */}
@@ -784,7 +944,7 @@ export default function SettingsTab() {
                       <button
                         key={p.id}
                         type="button"
-                        onClick={() => setSettings(prev => ({ ...prev, ai_settings: { ...(prev.ai_settings || {}), provider: p.id as any } }))}
+                        onClick={() => handleSelectProvider(p.id)}
                         className={`flex flex-col items-center justify-center gap-1.5 py-3 px-2 rounded-xl border text-xs font-medium transition-all ${
                           isSelected
                             ? 'border-blue-600 bg-blue-50 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300 dark:border-blue-500 font-bold shadow-sm ring-2 ring-blue-500/20'
@@ -798,64 +958,39 @@ export default function SettingsTab() {
                   })}
                 </div>
 
-                {/* Specific Provider Configs */}
-                {(settings['ai_settings']?.provider || 'gemini') === 'gemini' && (
-                  <div className="space-y-4 p-4 bg-neutral-50 dark:bg-neutral-800/40 rounded-xl border border-neutral-200 dark:border-neutral-700/60">
-                    <div>
-                      <label className="block text-sm font-semibold text-neutral-700 dark:text-neutral-300 mb-1.5">API Anahtarı (API Key)</label>
+                {/* Specific Provider Connection Configs */}
+                <div className="space-y-4">
+                  {(settings['ai_settings']?.provider || 'gemini') === 'gemini' && (
+                    <div className="p-4 bg-neutral-50 dark:bg-neutral-800/40 rounded-xl border border-neutral-200 dark:border-neutral-700/60 space-y-2">
+                      <label className="block text-sm font-semibold text-neutral-700 dark:text-neutral-300">Gemini API Anahtarı (İsteğe Bağlı)</label>
                       <input 
                         type="password"
-                        placeholder="Varsayılan sunucu ortam anahtarı kullanılır veya buraya özel anahtar girin"
+                        placeholder="Boş bırakılırsa sunucu ortamındaki dahili GEMINI_API_KEY kullanılır"
                         value={settings['ai_settings']?.key || ''}
                         onChange={(e) => setSettings(prev => ({ ...prev, ai_settings: { ...(prev.ai_settings || {}), key: e.target.value } }))}
                         className="w-full bg-white dark:bg-neutral-900 border border-neutral-300 dark:border-neutral-700 rounded-lg px-4 py-2.5 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
                       />
+                      <p className="text-xs text-neutral-500">Google AI Studio API anahtarınızı buraya girebilir veya dahili anahtarla kullanabilirsiniz.</p>
                     </div>
-                    <div>
-                      <label className="block text-sm font-semibold text-neutral-700 dark:text-neutral-300 mb-1.5">Model Seçimi</label>
-                      <select
-                        value={settings['ai_settings']?.geminiModel || 'gemini-2.5-flash'}
-                        onChange={(e) => setSettings(prev => ({ ...prev, ai_settings: { ...(prev.ai_settings || {}), geminiModel: e.target.value } }))}
-                        className="w-full bg-white dark:bg-neutral-900 border border-neutral-300 dark:border-neutral-700 rounded-lg px-4 py-2.5 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
-                      >
-                        <option value="gemini-2.5-flash">gemini-2.5-flash (Önerilen, Hızlı & Kararlı)</option>
-                        <option value="gemini-2.5-pro">gemini-2.5-pro (Kapsamlı Mantık ve Finansal Analiz)</option>
-                        <option value="gemini-3.8-flash">gemini-3.8-flash (Deneysel)</option>
-                        <option value="gemini-flash-latest">gemini-flash-latest</option>
-                      </select>
-                    </div>
-                  </div>
-                )}
+                  )}
 
-                {settings['ai_settings']?.provider === 'openai' && (
-                  <div className="space-y-4 p-4 bg-neutral-50 dark:bg-neutral-800/40 rounded-xl border border-neutral-200 dark:border-neutral-700/60">
-                    <div>
-                      <label className="block text-sm font-semibold text-neutral-700 dark:text-neutral-300 mb-1.5">OpenAI API Key</label>
+                  {settings['ai_settings']?.provider === 'openai' && (
+                    <div className="p-4 bg-neutral-50 dark:bg-neutral-800/40 rounded-xl border border-neutral-200 dark:border-neutral-700/60 space-y-2">
+                      <label className="block text-sm font-semibold text-neutral-700 dark:text-neutral-300">OpenAI API Key</label>
                       <input 
                         type="password"
                         placeholder="sk-proj-..."
                         value={settings['ai_settings']?.key || ''}
                         onChange={(e) => setSettings(prev => ({ ...prev, ai_settings: { ...(prev.ai_settings || {}), key: e.target.value } }))}
+                        onBlur={() => fetchModelsForProvider('openai', undefined, settings['ai_settings']?.key)}
                         className="w-full bg-white dark:bg-neutral-900 border border-neutral-300 dark:border-neutral-700 rounded-lg px-4 py-2.5 text-sm focus:ring-2 focus:ring-emerald-500 outline-none"
                       />
                     </div>
-                    <div>
-                      <label className="block text-sm font-semibold text-neutral-700 dark:text-neutral-300 mb-1.5">OpenAI Model Adı</label>
-                      <input 
-                        type="text"
-                        placeholder="gpt-4o-mini, gpt-4o, o3-mini..."
-                        value={settings['ai_settings']?.openaiModel || 'gpt-4o-mini'}
-                        onChange={(e) => setSettings(prev => ({ ...prev, ai_settings: { ...(prev.ai_settings || {}), openaiModel: e.target.value } }))}
-                        className="w-full bg-white dark:bg-neutral-900 border border-neutral-300 dark:border-neutral-700 rounded-lg px-4 py-2.5 text-sm font-mono focus:ring-2 focus:ring-emerald-500 outline-none"
-                      />
-                    </div>
-                  </div>
-                )}
+                  )}
 
-                {settings['ai_settings']?.provider === 'anthropic' && (
-                  <div className="space-y-4 p-4 bg-neutral-50 dark:bg-neutral-800/40 rounded-xl border border-neutral-200 dark:border-neutral-700/60">
-                    <div>
-                      <label className="block text-sm font-semibold text-neutral-700 dark:text-neutral-300 mb-1.5">Anthropic Claude API Key</label>
+                  {settings['ai_settings']?.provider === 'anthropic' && (
+                    <div className="p-4 bg-neutral-50 dark:bg-neutral-800/40 rounded-xl border border-neutral-200 dark:border-neutral-700/60 space-y-2">
+                      <label className="block text-sm font-semibold text-neutral-700 dark:text-neutral-300">Anthropic Claude API Key</label>
                       <input 
                         type="password"
                         placeholder="sk-ant-..."
@@ -864,23 +999,11 @@ export default function SettingsTab() {
                         className="w-full bg-white dark:bg-neutral-900 border border-neutral-300 dark:border-neutral-700 rounded-lg px-4 py-2.5 text-sm focus:ring-2 focus:ring-amber-500 outline-none"
                       />
                     </div>
-                    <div>
-                      <label className="block text-sm font-semibold text-neutral-700 dark:text-neutral-300 mb-1.5">Claude Model Adı</label>
-                      <input 
-                        type="text"
-                        placeholder="claude-3-5-haiku-20241022, claude-3-7-sonnet-20250219..."
-                        value={settings['ai_settings']?.anthropicModel || 'claude-3-5-haiku-20241022'}
-                        onChange={(e) => setSettings(prev => ({ ...prev, ai_settings: { ...(prev.ai_settings || {}), anthropicModel: e.target.value } }))}
-                        className="w-full bg-white dark:bg-neutral-900 border border-neutral-300 dark:border-neutral-700 rounded-lg px-4 py-2.5 text-sm font-mono focus:ring-2 focus:ring-amber-500 outline-none"
-                      />
-                    </div>
-                  </div>
-                )}
+                  )}
 
-                {settings['ai_settings']?.provider === 'deepseek' && (
-                  <div className="space-y-4 p-4 bg-neutral-50 dark:bg-neutral-800/40 rounded-xl border border-neutral-200 dark:border-neutral-700/60">
-                    <div>
-                      <label className="block text-sm font-semibold text-neutral-700 dark:text-neutral-300 mb-1.5">DeepSeek API Key</label>
+                  {settings['ai_settings']?.provider === 'deepseek' && (
+                    <div className="p-4 bg-neutral-50 dark:bg-neutral-800/40 rounded-xl border border-neutral-200 dark:border-neutral-700/60 space-y-2">
+                      <label className="block text-sm font-semibold text-neutral-700 dark:text-neutral-300">DeepSeek API Key</label>
                       <input 
                         type="password"
                         placeholder="sk-..."
@@ -889,158 +1012,282 @@ export default function SettingsTab() {
                         className="w-full bg-white dark:bg-neutral-900 border border-neutral-300 dark:border-neutral-700 rounded-lg px-4 py-2.5 text-sm focus:ring-2 focus:ring-sky-500 outline-none"
                       />
                     </div>
-                    <div>
-                      <label className="block text-sm font-semibold text-neutral-700 dark:text-neutral-300 mb-1.5">DeepSeek Model Seçimi</label>
-                      <select
-                        value={settings['ai_settings']?.deepseekModel || 'deepseek-chat'}
-                        onChange={(e) => setSettings(prev => ({ ...prev, ai_settings: { ...(prev.ai_settings || {}), deepseekModel: e.target.value } }))}
-                        className="w-full bg-white dark:bg-neutral-900 border border-neutral-300 dark:border-neutral-700 rounded-lg px-4 py-2.5 text-sm focus:ring-2 focus:ring-sky-500 outline-none"
-                      >
-                        <option value="deepseek-chat">deepseek-chat (V3 - Genel Finans & Hızlı)</option>
-                        <option value="deepseek-reasoner">deepseek-reasoner (R1 - Derin Akıl Yürütme)</option>
-                      </select>
-                    </div>
-                  </div>
-                )}
+                  )}
 
-                {settings['ai_settings']?.provider === 'groq' && (
-                  <div className="space-y-4 p-4 bg-neutral-50 dark:bg-neutral-800/40 rounded-xl border border-neutral-200 dark:border-neutral-700/60">
-                    <div>
-                      <label className="block text-sm font-semibold text-neutral-700 dark:text-neutral-300 mb-1.5">Groq Cloud API Key</label>
+                  {settings['ai_settings']?.provider === 'groq' && (
+                    <div className="p-4 bg-neutral-50 dark:bg-neutral-800/40 rounded-xl border border-neutral-200 dark:border-neutral-700/60 space-y-2">
+                      <label className="block text-sm font-semibold text-neutral-700 dark:text-neutral-300">Groq Cloud API Key</label>
                       <input 
                         type="password"
                         placeholder="gsk_..."
                         value={settings['ai_settings']?.key || ''}
                         onChange={(e) => setSettings(prev => ({ ...prev, ai_settings: { ...(prev.ai_settings || {}), key: e.target.value } }))}
+                        onBlur={() => fetchModelsForProvider('groq', undefined, settings['ai_settings']?.key)}
                         className="w-full bg-white dark:bg-neutral-900 border border-neutral-300 dark:border-neutral-700 rounded-lg px-4 py-2.5 text-sm focus:ring-2 focus:ring-orange-500 outline-none"
                       />
                     </div>
-                    <div>
-                      <label className="block text-sm font-semibold text-neutral-700 dark:text-neutral-300 mb-1.5">Groq Ultra-Hızlı Model</label>
-                      <select
-                        value={settings['ai_settings']?.groqModel || 'llama-3.3-70b-versatile'}
-                        onChange={(e) => setSettings(prev => ({ ...prev, ai_settings: { ...(prev.ai_settings || {}), groqModel: e.target.value } }))}
-                        className="w-full bg-white dark:bg-neutral-900 border border-neutral-300 dark:border-neutral-700 rounded-lg px-4 py-2.5 text-sm focus:ring-2 focus:ring-orange-500 outline-none"
-                      >
-                        <option value="llama-3.3-70b-versatile">llama-3.3-70b-versatile (En Yüksek İsabet)</option>
-                        <option value="llama-3.1-8b-instant">llama-3.1-8b-instant (Işık Hızında)</option>
-                        <option value="deepseek-r1-distill-llama-70b">deepseek-r1-distill-llama-70b</option>
-                      </select>
-                    </div>
-                  </div>
-                )}
+                  )}
 
-                {settings['ai_settings']?.provider === 'openrouter' && (
-                  <div className="space-y-4 p-4 bg-neutral-50 dark:bg-neutral-800/40 rounded-xl border border-neutral-200 dark:border-neutral-700/60">
-                    <div>
-                      <label className="block text-sm font-semibold text-neutral-700 dark:text-neutral-300 mb-1.5">OpenRouter API Key</label>
+                  {settings['ai_settings']?.provider === 'openrouter' && (
+                    <div className="p-4 bg-neutral-50 dark:bg-neutral-800/40 rounded-xl border border-neutral-200 dark:border-neutral-700/60 space-y-2">
+                      <label className="block text-sm font-semibold text-neutral-700 dark:text-neutral-300">OpenRouter API Key</label>
                       <input 
                         type="password"
                         placeholder="sk-or-..."
                         value={settings['ai_settings']?.key || ''}
                         onChange={(e) => setSettings(prev => ({ ...prev, ai_settings: { ...(prev.ai_settings || {}), key: e.target.value } }))}
+                        onBlur={() => fetchModelsForProvider('openrouter', undefined, settings['ai_settings']?.key)}
                         className="w-full bg-white dark:bg-neutral-900 border border-neutral-300 dark:border-neutral-700 rounded-lg px-4 py-2.5 text-sm focus:ring-2 focus:ring-purple-500 outline-none"
                       />
                     </div>
-                    <div>
-                      <label className="block text-sm font-semibold text-neutral-700 dark:text-neutral-300 mb-1.5">OpenRouter Model Adı</label>
-                      <input 
-                        type="text"
-                        placeholder="meta-llama/llama-3.1-8b-instruct"
-                        value={settings['ai_settings']?.openrouterModel || 'meta-llama/llama-3.1-8b-instruct'}
-                        onChange={(e) => setSettings(prev => ({ ...prev, ai_settings: { ...(prev.ai_settings || {}), openrouterModel: e.target.value } }))}
-                        className="w-full bg-white dark:bg-neutral-900 border border-neutral-300 dark:border-neutral-700 rounded-lg px-4 py-2.5 text-sm font-mono focus:ring-2 focus:ring-purple-500 outline-none"
-                      />
-                    </div>
-                  </div>
-                )}
+                  )}
 
-                {settings['ai_settings']?.provider === '9router' && (
-                  <div className="space-y-4 p-4 bg-neutral-50 dark:bg-neutral-800/40 rounded-xl border border-neutral-200 dark:border-neutral-700/60">
-                    <div className="p-3 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800/60 rounded-lg text-xs text-amber-800 dark:text-amber-300 space-y-1">
-                      <p className="font-semibold">💡 Bulut Ortamı Notu:</p>
-                      <p>
-                        Uygulama bulut sunucusunda çalıştığında <code>localhost</code> adresi bulut konteynerini hedefler. Kendi bilgisayarınızdaki 9router proxy'sine bağlanmak için Ngrok, Cloudflare Tunnel URL'si veya harici IP adresinizi kullanınız. Proxy ulaşılamadığında sistem kesintisiz olarak Google Gemini yedek motoruna otomatik geçer.
-                      </p>
+                  {settings['ai_settings']?.provider === '9router' && (
+                    <div className="p-4 bg-neutral-50 dark:bg-neutral-800/40 rounded-xl border border-neutral-200 dark:border-neutral-700/60 space-y-3">
+                      <div className="p-3 bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800/60 rounded-lg text-xs text-blue-800 dark:text-blue-300 space-y-1">
+                        <p className="font-semibold flex items-center gap-1.5">
+                          <Network size={14} /> 9router Entegrasyonu & Bağlantı
+                        </p>
+                        <p>
+                          9router proxy adresinizi girip <strong>"Modelleri Tara"</strong> butonuna bastığınızda, proxy üzerindeki erişilebilir tüm modeller doğrudan aşağıdaki seçim kutusuna getirilir. Elle model adı yazmanıza gerek kalmaz.
+                        </p>
+                        <p className="text-[11px] opacity-80">
+                          (Standart yerel port: <code>http://localhost:2165/v1/chat/completions</code>. Bulut ortamından yerel makinenize erişirken Ngrok veya Cloudflare Tunnel adresi kullanabilirsiniz.)
+                        </p>
+                      </div>
+                      <div>
+                        <div className="flex items-center justify-between mb-1.5">
+                          <label className="text-sm font-semibold text-neutral-700 dark:text-neutral-300">9router Endpoint URL</label>
+                          <span className="text-[11px] text-neutral-400">Şablon Seç:</span>
+                        </div>
+                        <div className="flex gap-2 mb-2">
+                          <input 
+                            type="text"
+                            placeholder="http://localhost:2165/v1/chat/completions"
+                            value={settings['ai_settings']?.ninerouterUrl ?? 'http://localhost:2165/v1/chat/completions'}
+                            onChange={(e) => setSettings(prev => ({ ...prev, ai_settings: { ...(prev.ai_settings || {}), ninerouterUrl: e.target.value } }))}
+                            onBlur={() => fetchModelsForProvider('9router', settings['ai_settings']?.ninerouterUrl, settings['ai_settings']?.ninerouterKey)}
+                            className="flex-1 bg-white dark:bg-neutral-900 border border-neutral-300 dark:border-neutral-700 rounded-lg px-4 py-2.5 text-sm font-mono focus:ring-2 focus:ring-rose-500 outline-none"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => fetchModelsForProvider('9router', settings['ai_settings']?.ninerouterUrl || 'http://localhost:2165/v1/chat/completions', settings['ai_settings']?.ninerouterKey)}
+                            disabled={loadingModels}
+                            className="px-3 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors shrink-0 disabled:opacity-50"
+                          >
+                            <RefreshCw size={13} className={loadingModels ? 'animate-spin' : ''} />
+                            Modelleri Tara
+                          </button>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
+                          <span className="text-neutral-500">Hızlı Doldur:</span>
+                          <button
+                            type="button"
+                            onClick={() => setSettings(prev => ({ ...prev, ai_settings: { ...(prev.ai_settings || {}), ninerouterUrl: 'http://localhost:2165/v1/chat/completions' } }))}
+                            className="px-2 py-0.5 rounded bg-neutral-200 dark:bg-neutral-700 hover:bg-neutral-300 text-neutral-700 dark:text-neutral-300 font-mono"
+                          >
+                            http://localhost:2165
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setSettings(prev => ({ ...prev, ai_settings: { ...(prev.ai_settings || {}), ninerouterUrl: 'https://xxxx.trycloudflare.com/v1/chat/completions' } }))}
+                            className="px-2 py-0.5 rounded bg-rose-100 dark:bg-rose-950/60 hover:bg-rose-200 text-rose-800 dark:text-rose-300 font-mono"
+                          >
+                            Tünel Şablonu (Cloudflare)
+                          </button>
+                        </div>
+                      </div>
+                      <div>
+                        <label className="block text-sm font-semibold text-neutral-700 dark:text-neutral-300 mb-1.5">9router API Key (Opsiyonel)</label>
+                        <input 
+                          type="password"
+                          placeholder="Proxy şifresi varsa girin (isteğe bağlı)"
+                          value={settings['ai_settings']?.ninerouterKey || ''}
+                          onChange={(e) => setSettings(prev => ({ ...prev, ai_settings: { ...(prev.ai_settings || {}), ninerouterKey: e.target.value } }))}
+                          className="w-full bg-white dark:bg-neutral-900 border border-neutral-300 dark:border-neutral-700 rounded-lg px-4 py-2.5 text-sm focus:ring-2 focus:ring-rose-500 outline-none"
+                        />
+                      </div>
                     </div>
-                    <div>
-                      <label className="block text-sm font-semibold text-neutral-700 dark:text-neutral-300 mb-1.5">9router Endpoint URL</label>
-                      <input 
-                        type="text"
-                        placeholder="http://localhost:4000/v1/chat/completions"
-                        value={settings['ai_settings']?.ninerouterUrl || 'http://localhost:4000/v1/chat/completions'}
-                        onChange={(e) => setSettings(prev => ({ ...prev, ai_settings: { ...(prev.ai_settings || {}), ninerouterUrl: e.target.value } }))}
-                        className="w-full bg-white dark:bg-neutral-900 border border-neutral-300 dark:border-neutral-700 rounded-lg px-4 py-2.5 text-sm font-mono focus:ring-2 focus:ring-rose-500 outline-none"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-sm font-semibold text-neutral-700 dark:text-neutral-300 mb-1.5">9router API Key (Opsiyonel)</label>
-                      <input 
-                        type="password"
-                        placeholder="Eğer proxy'niz şifreliyse"
-                        value={settings['ai_settings']?.ninerouterKey || ''}
-                        onChange={(e) => setSettings(prev => ({ ...prev, ai_settings: { ...(prev.ai_settings || {}), ninerouterKey: e.target.value } }))}
-                        className="w-full bg-white dark:bg-neutral-900 border border-neutral-300 dark:border-neutral-700 rounded-lg px-4 py-2.5 text-sm focus:ring-2 focus:ring-rose-500 outline-none"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-sm font-semibold text-neutral-700 dark:text-neutral-300 mb-1.5">9router Model Adı</label>
-                      <input 
-                        type="text"
-                        placeholder="default"
-                        value={settings['ai_settings']?.ninerouterModel || 'default'}
-                        onChange={(e) => setSettings(prev => ({ ...prev, ai_settings: { ...(prev.ai_settings || {}), ninerouterModel: e.target.value } }))}
-                        className="w-full bg-white dark:bg-neutral-900 border border-neutral-300 dark:border-neutral-700 rounded-lg px-4 py-2.5 text-sm font-mono focus:ring-2 focus:ring-rose-500 outline-none"
-                      />
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => setSettings(prev => ({ ...prev, ai_settings: { ...(prev.ai_settings || {}), provider: 'gemini', geminiModel: 'gemini-2.5-flash' } }))}
-                      className="text-xs text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1 font-medium"
-                    >
-                      ← Google Gemini (Dahili Sunucu Motoru)'na Geç
-                    </button>
-                  </div>
-                )}
+                  )}
 
-                {settings['ai_settings']?.provider === 'local' && (
-                  <div className="space-y-4 p-4 bg-neutral-50 dark:bg-neutral-800/40 rounded-xl border border-neutral-200 dark:border-neutral-700/60">
-                    <div className="p-3 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800/60 rounded-lg text-xs text-amber-800 dark:text-amber-300 space-y-1">
-                      <p className="font-semibold">💡 Bulut Ortamı Notu:</p>
-                      <p>
-                        Kendi bilgisayarınızdaki Ollama'ya buluttan erişmek için Ngrok veya genel IP adresi kullanabilirsiniz. Bağlantı sağlanamazsa sistem otomatik Gemini yedek motoruna geçer.
-                      </p>
+                  {settings['ai_settings']?.provider === 'local' && (
+                    <div className="p-4 bg-neutral-50 dark:bg-neutral-800/40 rounded-xl border border-neutral-200 dark:border-neutral-700/60 space-y-3">
+                      <div className="p-3 bg-teal-50 dark:bg-teal-950/40 border border-teal-200 dark:border-teal-800/60 rounded-lg text-xs text-teal-800 dark:text-teal-300 space-y-1">
+                        <p className="font-semibold flex items-center gap-1.5">
+                          <HardDrive size={14} /> Yerel Ollama Motoru & Bağlantı
+                        </p>
+                        <p>
+                          Ollama sunucunuz çalışırken <strong>"Modelleri Tara"</strong> butonuna bastığınızda, cihazınızda kurulu modeller (llama3, mistral, deepseek-r1 vb.) taranarak listelenir.
+                        </p>
+                      </div>
+                      <div>
+                        <div className="flex items-center justify-between mb-1.5">
+                          <label className="text-sm font-semibold text-neutral-700 dark:text-neutral-300">Yerel Sunucu Endpoint (Ollama / Local API)</label>
+                          <span className="text-[11px] text-neutral-400">Şablon Seç:</span>
+                        </div>
+                        <div className="flex gap-2 mb-2">
+                          <input 
+                            type="text"
+                            placeholder="http://localhost:11434/api/generate"
+                            value={settings['ai_settings']?.localUrl ?? 'http://localhost:11434/api/generate'}
+                            onChange={(e) => setSettings(prev => ({ ...prev, ai_settings: { ...(prev.ai_settings || {}), localUrl: e.target.value } }))}
+                            onBlur={() => fetchModelsForProvider('local', settings['ai_settings']?.localUrl)}
+                            className="flex-1 bg-white dark:bg-neutral-900 border border-neutral-300 dark:border-neutral-700 rounded-lg px-4 py-2.5 text-sm font-mono focus:ring-2 focus:ring-teal-500 outline-none"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => fetchModelsForProvider('local', settings['ai_settings']?.localUrl || 'http://localhost:11434/api/generate')}
+                            disabled={loadingModels}
+                            className="px-3 py-2 bg-teal-600 hover:bg-teal-700 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors shrink-0 disabled:opacity-50"
+                          >
+                            <RefreshCw size={13} className={loadingModels ? 'animate-spin' : ''} />
+                            Modelleri Tara
+                          </button>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
+                          <span className="text-neutral-500">Hızlı Doldur:</span>
+                          <button
+                            type="button"
+                            onClick={() => setSettings(prev => ({ ...prev, ai_settings: { ...(prev.ai_settings || {}), localUrl: 'http://localhost:11434/api/generate' } }))}
+                            className="px-2 py-0.5 rounded bg-neutral-200 dark:bg-neutral-700 hover:bg-neutral-300 text-neutral-700 dark:text-neutral-300 font-mono"
+                          >
+                            Ollama (11434)
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setSettings(prev => ({ ...prev, ai_settings: { ...(prev.ai_settings || {}), localUrl: 'http://localhost:1234/v1/chat/completions' } }))}
+                            className="px-2 py-0.5 rounded bg-neutral-200 dark:bg-neutral-700 hover:bg-neutral-300 text-neutral-700 dark:text-neutral-300 font-mono"
+                          >
+                            LM Studio (1234)
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setSettings(prev => ({ ...prev, ai_settings: { ...(prev.ai_settings || {}), localUrl: 'https://xxxx.trycloudflare.com/api/generate' } }))}
+                            className="px-2 py-0.5 rounded bg-teal-100 dark:bg-teal-950/60 hover:bg-teal-200 text-teal-800 dark:text-teal-300 font-mono"
+                          >
+                            Tünel Şablonu (Cloudflare)
+                          </button>
+                        </div>
+                      </div>
                     </div>
-                    <div>
-                      <label className="block text-sm font-semibold text-neutral-700 dark:text-neutral-300 mb-1.5">Yerel Sunucu Endpoint (Ollama / Local API)</label>
-                      <input 
-                        type="text"
-                        placeholder="http://localhost:11434/api/generate"
-                        value={settings['ai_settings']?.localUrl || 'http://localhost:11434/api/generate'}
-                        onChange={(e) => setSettings(prev => ({ ...prev, ai_settings: { ...(prev.ai_settings || {}), localUrl: e.target.value } }))}
-                        className="w-full bg-white dark:bg-neutral-900 border border-neutral-300 dark:border-neutral-700 rounded-lg px-4 py-2.5 text-sm font-mono focus:ring-2 focus:ring-teal-500 outline-none"
-                      />
-                      <p className="text-xs text-neutral-500 mt-1.5">Örn: Ollama için 'http://localhost:11434/api/generate'</p>
+                  )}
+
+                  {/* Dynamic Model Selector for All Providers */}
+                  <div className="p-4 bg-neutral-50 dark:bg-neutral-800/40 rounded-xl border border-neutral-200 dark:border-neutral-700/60 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <label className="text-sm font-semibold text-neutral-900 dark:text-white">
+                          Model Seçimi
+                        </label>
+                        {modelsSource === 'live' && (
+                          <span className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800">
+                            <Wifi size={12} />
+                            Canlı Uç Nokta
+                          </span>
+                        )}
+                        {modelsSource === 'preset' && (
+                          <span className="text-[11px] font-medium px-2 py-0.5 rounded-full bg-neutral-200 dark:bg-neutral-700 text-neutral-700 dark:text-neutral-300">
+                            Önerilen Liste
+                          </span>
+                        )}
+                      </div>
+                      
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setCustomModelMode(!customModelMode)}
+                          className="text-xs text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1"
+                        >
+                          <Edit3 size={13} />
+                          {customModelMode ? 'Listeden Seç' : 'Manuel Model Adı Yaz'}
+                        </button>
+                        
+                        <button
+                          type="button"
+                          onClick={() => fetchModelsForProvider()}
+                          disabled={loadingModels}
+                          className="text-xs font-semibold px-2.5 py-1 rounded-lg border border-neutral-300 dark:border-neutral-700 hover:bg-neutral-200 dark:hover:bg-neutral-700 text-neutral-700 dark:text-neutral-300 flex items-center gap-1.5 transition-colors disabled:opacity-50"
+                          title="Uç noktadan modelleri çek"
+                        >
+                          <RefreshCw size={12} className={loadingModels ? 'animate-spin text-blue-600' : ''} />
+                          {loadingModels ? 'Getiriliyor...' : 'Modelleri Getir'}
+                        </button>
+                      </div>
                     </div>
-                    <div>
-                      <label className="block text-sm font-semibold text-neutral-700 dark:text-neutral-300 mb-1.5">Yerel Model Adı</label>
-                      <input 
-                        type="text"
-                        placeholder="llama3, mistral, qwen2.5, phi3..."
-                        value={settings['ai_settings']?.localModel || 'llama3'}
-                        onChange={(e) => setSettings(prev => ({ ...prev, ai_settings: { ...(prev.ai_settings || {}), localModel: e.target.value } }))}
-                        className="w-full bg-white dark:bg-neutral-900 border border-neutral-300 dark:border-neutral-700 rounded-lg px-4 py-2.5 text-sm font-mono focus:ring-2 focus:ring-teal-500 outline-none"
-                      />
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => setSettings(prev => ({ ...prev, ai_settings: { ...(prev.ai_settings || {}), provider: 'gemini', geminiModel: 'gemini-2.5-flash' } }))}
-                      className="text-xs text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1 font-medium"
-                    >
-                      ← Google Gemini (Dahili Sunucu Motoru)'na Geç
-                    </button>
+
+                    {customModelMode ? (
+                      <div className="space-y-1">
+                        <input
+                          type="text"
+                          placeholder="Örn: gpt-4o, llama-3.3-70b, custom-model..."
+                          value={settings['ai_settings']?.model || ''}
+                          onChange={(e) => setSettings(prev => ({
+                            ...prev,
+                            ai_settings: { ...(prev.ai_settings || {}), model: e.target.value }
+                          }))}
+                          className="w-full bg-white dark:bg-neutral-900 border border-neutral-300 dark:border-neutral-700 rounded-lg px-4 py-2.5 text-sm font-mono focus:ring-2 focus:ring-blue-500 outline-none"
+                        />
+                        <p className="text-xs text-neutral-500">Özel veya listede görünmeyen bir model adı girin.</p>
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        <div className="relative">
+                          <select
+                            value={settings['ai_settings']?.model || (availableModels[0] || '')}
+                            onChange={(e) => setSettings(prev => ({
+                              ...prev,
+                              ai_settings: { ...(prev.ai_settings || {}), model: e.target.value }
+                            }))}
+                            disabled={loadingModels || availableModels.length === 0}
+                            className="w-full bg-white dark:bg-neutral-900 border border-neutral-300 dark:border-neutral-700 rounded-lg px-4 py-2.5 text-sm font-mono focus:ring-2 focus:ring-blue-500 outline-none appearance-none pr-10 cursor-pointer"
+                          >
+                            {availableModels.map(m => (
+                              <option key={m} value={m}>{m}</option>
+                            ))}
+                            {availableModels.length === 0 && (
+                              <option value="">{loadingModels ? 'Modeller yükleniyor...' : 'Model bulunamadı'}</option>
+                            )}
+                          </select>
+                          <ChevronDown size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-neutral-400 pointer-events-none" />
+                        </div>
+
+                        {modelsMessage && (
+                          <p className="text-xs text-neutral-500 flex items-center gap-1">
+                            <Info size={12} className="text-blue-500 shrink-0" />
+                            {modelsMessage}
+                          </p>
+                        )}
+
+                        {/* Quick Model Chips */}
+                        {availableModels.length > 1 && (
+                          <div className="flex flex-wrap gap-1.5 pt-1">
+                            <span className="text-[11px] text-neutral-400 self-center mr-1">Hızlı Seçim:</span>
+                            {availableModels.slice(0, 6).map(m => {
+                              const isSelected = (settings['ai_settings']?.model || availableModels[0]) === m;
+                              return (
+                                <button
+                                  key={m}
+                                  type="button"
+                                  onClick={() => setSettings(prev => ({
+                                    ...prev,
+                                    ai_settings: { ...(prev.ai_settings || {}), model: m }
+                                  }))}
+                                  className={`text-[11px] px-2.5 py-1 rounded-md font-mono border transition-all ${
+                                    isSelected
+                                      ? 'bg-blue-100 text-blue-800 border-blue-400 dark:bg-blue-900/60 dark:text-blue-200 dark:border-blue-600 font-bold shadow-xs'
+                                      : 'bg-white dark:bg-neutral-900 text-neutral-600 dark:text-neutral-400 border-neutral-200 dark:border-neutral-700 hover:border-blue-400'
+                                  }`}
+                                >
+                                  {m}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
-                )}
+                </div>
               </div>
 
               {/* Action Buttons for AI */}
@@ -1057,7 +1304,7 @@ export default function SettingsTab() {
 
                 <button
                   type="button"
-                  onClick={() => handleSaveSetting('ai_settings', settings['ai_settings'] || { enabled: true, summarizeLargeDocs: true })}
+                  onClick={handleSaveAiSettings}
                   disabled={saving}
                   className="flex-1 py-2.5 px-4 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-bold transition-colors flex items-center justify-center gap-2"
                 >

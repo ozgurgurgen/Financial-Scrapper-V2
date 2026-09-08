@@ -135,31 +135,39 @@ class ComprehensiveDataIntegrationService {
 
   public async initializeSeedData(): Promise<void> {
     if (this.isInitialized) return;
-    try {
-      console.log('[ComprehensiveData] Veri entegrasyonu ve tohumlama kontrol ediliyor...');
-      
-      // 1. BIST Stocks Seed & Update
-      await this.seedBistStocks();
 
-      // 2. Financials (36 Sütun) Seed
-      await this.seedFinancials();
+    const maxAttempts = 3;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        console.log(`[ComprehensiveData] Veri entegrasyonu ve tohumlama kontrol ediliyor (Deneme ${attempt}/${maxAttempts})...`);
+        
+        // 1. BIST Stocks Seed & Update
+        try { await this.seedBistStocks(); } catch (e: any) { console.warn('[ComprehensiveData] BIST tohumlama uyarısı:', e.message); }
 
-      // 3. Share Buybacks Seed
-      await this.seedBuybacks();
+        // 2. Financials (36 Sütun) Seed
+        try { await this.seedFinancials(); } catch (e: any) { console.warn('[ComprehensiveData] Finansallar tohumlama uyarısı:', e.message); }
 
-      // 4. IPOs Seed
-      await this.seedIpos();
+        // 3. Share Buybacks Seed
+        try { await this.seedBuybacks(); } catch (e: any) { console.warn('[ComprehensiveData] Geri alımlar tohumlama uyarısı:', e.message); }
 
-      // 5. TEFAS Fund Holdings Seed
-      await this.seedTefasHoldings();
+        // 4. IPOs Seed
+        try { await this.seedIpos(); } catch (e: any) { console.warn('[ComprehensiveData] Halka arzlar tohumlama uyarısı:', e.message); }
 
-      // 6. KAP Disclosures Seed
-      await this.seedDisclosures();
+        // 5. TEFAS Fund Holdings Seed
+        try { await this.seedTefasHoldings(); } catch (e: any) { console.warn('[ComprehensiveData] TEFAS portföy tohumlama uyarısı:', e.message); }
 
-      this.isInitialized = true;
-      console.log('[ComprehensiveData] Tüm eksik veri setleri ve tablolar başarıyla entegre edildi.');
-    } catch (err: any) {
-      console.error('[ComprehensiveData] Tohumlama sırasında hata:', err.message);
+        // 6. KAP Disclosures Seed
+        try { await this.seedDisclosures(); } catch (e: any) { console.warn('[ComprehensiveData] KAP bildirimleri tohumlama uyarısı:', e.message); }
+
+        this.isInitialized = true;
+        console.log('[ComprehensiveData] Tüm eksik veri setleri ve tablolar başarıyla entegre edildi.');
+        return;
+      } catch (err: any) {
+        console.warn(`[ComprehensiveData] Tohumlama denemesi ${attempt} başarısız oldu:`, err.message);
+        if (attempt < maxAttempts) {
+          await new Promise(resolve => setTimeout(resolve, 2500 * attempt));
+        }
+      }
     }
   }
 

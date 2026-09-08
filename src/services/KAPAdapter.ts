@@ -13,6 +13,19 @@ export type KAPDataGroup =
   | 'GOVERNANCE' 
   | 'FUNDS';
 
+export function cleanKapText(raw: string): string {
+  if (!raw) return '';
+  return raw
+    .replace(/Summernote[\s\S]*?(?:100%50%25%|Kısayollar|$)/gi, '')
+    .replace(/\[CONSOLIDATION_METHOD_TITLE\][\s\S]*?oda_[a-zA-Z0-9_]+/gi, '')
+    .replace(/(?:Ctrl\s*\+\s*[A-Za-z0-9]+|Kısayollar|Girintiyi\s*azalt|Girintiyi\s*artır|Yatay\s*çizgi\s*ekle|Resim\s*ekle|Bağlantı\s*ekle|Paragraf\s*biçimlendirme|Yazı\s*biçimlendirme|NormalCtrl|Başlık\s*[0-9]|Sola\s*hizala|Ortaya\s*hizala|Sağa\s*hizala|Numaralı\s*liste|Madde\s*işaretli\s*liste)+/gi, ' ')
+    .replace(/\b(?:TurkishİngilizceEnglish|TürkçeTurkishİngilizceEnglish|oda_[a-zA-Z0-9_]+)\b/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 export class KAPAdapter implements DataSourceAdapter {
   sourceName = 'KAP';
 
@@ -225,10 +238,14 @@ export class KAPAdapter implements DataSourceAdapter {
             if (detailObj.disclosureBody) {
               try {
                 const $ = cheerio.load(`<div>${detailObj.disclosureBody}</div>`);
-                $('script, style, noscript').remove();
-                fullText = $('div').text().replace(/\s+/g, ' ').trim();
+                $('script, style, noscript, .note-editor, .modal, .modal-dialog, .tooltip, .popover, .dropdown-menu').remove();
+                $('*').filter(function() {
+                  const t = $(this).text();
+                  return t.includes('Summernote') || t.includes('Kısayollar') || t.includes('Ctrl + Z') || t.includes('Resim ekle') || t.includes('Girintiyi azalt');
+                }).remove();
+                fullText = cleanKapText($('div').text());
               } catch {
-                fullText = (detailObj.disclosureBody || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+                fullText = cleanKapText(detailObj.disclosureBody || '');
               }
             }
 
@@ -245,27 +262,41 @@ export class KAPAdapter implements DataSourceAdapter {
           console.warn(`Detail fetch failed for index ${index}:`, detailErr.message);
         }
 
-        // If body text is empty, fall back to basic summary
-        if (!fullText) {
-          fullText = basic.summary || title;
+        // If body text is empty or too short, fall back to basic summary
+        if (!fullText || fullText.length < 25) {
+          fullText = cleanKapText(basic.summary) || cleanKapText(title) || `${companyTitle} - KAP Bildirimi`;
         }
 
-        // 3. AI Summarization for large documents (with quota protection)
+        // 3. AI Summarization for documents (with quota protection)
         let aiSummary = '';
-        if (aiConfig.enabled && fullText && fullText.length >= aiConfig.largeDocMinLength) {
+        if (aiConfig.enabled && fullText) {
           try {
             if (aiSummarizedCount < MAX_AI_PER_BATCH && !aiService.isQuotaCoolingDown()) {
-              aiSummary = await aiService.summarizeText(fullText, false);
+              aiSummary = await aiService.analyzeCompanyDisclosure({
+                symbol: symbol || undefined,
+                companyTitle,
+                title,
+                fullText,
+                category: classification.label,
+                force: false
+              });
               if (aiSummary) aiSummarizedCount++;
             } else {
-              // Use fast, quota-free local financial extractor
-              aiSummary = aiService.generateLocalFinancialSummary(fullText);
+              aiSummary = aiService.generateLocalFinancialSummary(fullText, {
+                symbol: symbol || undefined,
+                companyTitle,
+                title,
+                category: classification.label
+              });
             }
           } catch (aiErr: any) {
-            aiSummary = aiService.generateLocalFinancialSummary(fullText);
+            aiSummary = aiService.generateLocalFinancialSummary(fullText, {
+              symbol: symbol || undefined,
+              companyTitle,
+              title,
+              category: classification.label
+            });
           }
-        } else if (fullText) {
-          aiSummary = basic.summary || aiService.generateLocalFinancialSummary(fullText);
         }
 
         // 4. Prepare rich payload

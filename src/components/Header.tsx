@@ -31,6 +31,7 @@ const TAB_TITLES: Record<TabType, { title: string; desc: string }> = {
   us: { title: 'ABD Piyasaları (US Stocks)', desc: 'S&P 500 ve Nasdaq hisseleri, değerleme oranları ve çarpanlar' },
   analyst: { title: 'Analist Yorumları & Araştırma Masası', desc: 'BIST, ABD, TEFAS ve Kripto analist notlarının telif korumalı Yapay Zeka Sentezi' },
   'api-charts': { title: 'API Grafik & Telemetri Analitiği', desc: 'İstek hacimleri, gecikme yüzdelikleri, pazar dağılımı, müşteri kota tüketimi ve tam API rehberi' },
+  'system-logs': { title: 'Kapsamlı Sistem & Hata Loglama Merkezi', desc: 'API hataları, veri bağdaştırıcıları, stack trace kayıtları ve denetim izleme merkezi' },
   api: { title: 'API Yönetimi, Telemetri & Sistem Diagnostiği', desc: 'Canlı istek akışı, API anahtarları, SLA metrikleri, master aktivasyon switchi ve interaktif sandbox' },
   settings: { title: 'Ayarlar & Senkronizasyon', desc: 'Sistem yapılandırması ve API anahtarları' },
   'data-health': { title: 'Veri Kaynakları & Sıfır Kesinti Kalkanı', desc: 'Canlı sağlık durumu, 24s heatmap, failover denetimi ve 6 katmanlı kesintisiz veri zırhı' },

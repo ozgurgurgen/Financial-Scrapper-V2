@@ -1,16 +1,17 @@
 import { db } from '../db/index.ts';
 import { assets, assetMappings, assetData, unmatchedData, syncLogs, settings } from '../db/schema.ts';
 import { eq, and } from 'drizzle-orm';
-import { DataSourceAdapter } from './DataSourceAdapter.ts';
-import { appEventBus, DepartmentType, ActorType } from './AppEventBus.ts';
+import type { DataSourceAdapter } from './DataSourceAdapter.ts';
+import { appEventBus, type DepartmentType, type ActorType } from './AppEventBus.ts';
+import { systemLogger, type LogModule } from './SystemLoggerService.ts';
 
-const sourceToDept: Record<string, { dept: DepartmentType; actor: ActorType }> = {
-  YAHOO: { dept: 'BORSA', actor: 'YAHOO_ADAPTER' },
-  TEFAS: { dept: 'BORSA', actor: 'TEFAS_ADAPTER' },
-  TCMB: { dept: 'MERKEZ_BANKASI', actor: 'TCMB_ADAPTER' },
-  FRED: { dept: 'MERKEZ_BANKASI', actor: 'FRED_ADAPTER' },
-  KAP: { dept: 'KAP', actor: 'KAP_ADAPTER' },
-  CRYPTO: { dept: 'BORSA', actor: 'MARKET_SERVICE' }
+const sourceToDept: Record<string, { dept: DepartmentType; actor: ActorType; module: LogModule }> = {
+  YAHOO: { dept: 'BORSA', actor: 'YAHOO_ADAPTER', module: 'YAHOO_BIST' },
+  TEFAS: { dept: 'BORSA', actor: 'TEFAS_ADAPTER', module: 'TEFAS' },
+  TCMB: { dept: 'MERKEZ_BANKASI', actor: 'TCMB_ADAPTER', module: 'TCMB_EVDS' },
+  FRED: { dept: 'MERKEZ_BANKASI', actor: 'FRED_ADAPTER', module: 'SYSTEM' },
+  KAP: { dept: 'KAP', actor: 'KAP_ADAPTER', module: 'KAP' },
+  CRYPTO: { dept: 'BORSA', actor: 'MARKET_SERVICE', module: 'BINANCE_CRYPTO' }
 };
 
 export class SyncManager {
@@ -232,7 +233,7 @@ export class SyncManager {
 
     this.runningSyncs.add(sourceName);
 
-    const mapping = sourceToDept[sourceName] || { dept: 'ARSIV', actor: 'SYNC_MANAGER' };
+    const mapping = sourceToDept[sourceName] || { dept: 'ARSIV' as DepartmentType, actor: 'SYNC_MANAGER' as ActorType, module: 'SYNC' as LogModule };
     appEventBus.emitOfficeEvent({
       type: 'SYNC_STARTED',
       actor: mapping.actor,
@@ -245,9 +246,24 @@ export class SyncManager {
     try {
       const result = await adapter.sync();
       await this.logSync(result.source, result.status, result.recordsProcessed, result.message || '', result.startedAt, result.completedAt);
+      
+      if (result.status === 'ERROR') {
+        systemLogger.error(mapping.module, `${sourceName} senkronizasyon hatası: ${result.message || 'Bilinmeyen hata'}`, {
+          contextData: { source: sourceName, recordsProcessed: result.recordsProcessed }
+        }).catch(() => {});
+      } else {
+        systemLogger.info(mapping.module, `${sourceName} senkronizasyonu tamamlandı (${result.recordsProcessed} kayıt)`, {
+          contextData: { source: sourceName, recordsProcessed: result.recordsProcessed }
+        }).catch(() => {});
+      }
+
       return result;
     } catch (e: any) {
       await this.logSync(sourceName, 'ERROR', 0, e.message, new Date(), new Date());
+      systemLogger.error(mapping.module, `${sourceName} kritik senkronizasyon istisnası: ${e.message}`, {
+        stackTrace: e.stack,
+        contextData: { source: sourceName }
+      }).catch(() => {});
       throw e;
     } finally {
       this.runningSyncs.delete(sourceName);
