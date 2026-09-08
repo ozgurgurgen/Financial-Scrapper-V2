@@ -1142,12 +1142,29 @@ async function startServer() {
           res.write(`"${tableName}":[`);
           
           const limit = 5000;
-          let offset = 0;
+          let exportedCount = 0;
           let firstRow = true;
+          let lastId = 0;
+          const hasId = 'id' in table;
+          const { gt, asc } = await import('drizzle-orm');
           
-          while (offset < totalCount) {
-            const chunk = await defaultDb.select().from(table as any).limit(limit).offset(offset);
+          while (exportedCount < totalCount) {
+            let chunk;
+            if (hasId) {
+              chunk = await defaultDb.select().from(table as any)
+                .where(gt((table as any).id, lastId))
+                .orderBy(asc((table as any).id))
+                .limit(limit);
+            } else {
+              chunk = await defaultDb.select().from(table as any)
+                .limit(limit).offset(exportedCount);
+            }
+            
             if (chunk.length === 0) break;
+            
+            if (hasId) {
+              lastId = Number(chunk[chunk.length - 1].id) || 0;
+            }
             
             const chunkStr = JSON.stringify(chunk, (key, value) =>
               typeof value === 'bigint' ? value.toString() : value
@@ -1162,7 +1179,7 @@ async function startServer() {
               firstRow = false;
             }
             
-            offset += limit;
+            exportedCount += chunk.length;
           }
           
           res.write(']');
