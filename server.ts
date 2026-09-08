@@ -1106,14 +1106,81 @@ async function startServer() {
   // Veritabanı JSON Export / Import
   app.get('/api/settings/db/export', optionalAuth, async (req: AuthRequest, res) => {
     try {
+      console.log('Export requested');
       const includeLargeHistory = req.query.includeLargeHistory === 'true';
-      const { exportDatabaseToJson } = await import('./src/db/index.js');
-      const data = await exportDatabaseToJson(includeLargeHistory);
+      
       res.setHeader('Content-Type', 'application/json');
       res.setHeader('Content-Disposition', 'attachment; filename="database_backup.json"');
-      res.json(data);
+      res.flushHeaders();
+      res.write('{');
+      
+      const { schema, ORDERED_TABLE_KEYS, MASSIVE_HISTORY_TABLES, defaultDb } = await import('./src/db/index.js');
+      
+      let firstTable = true;
+      for (const tableKey of ORDERED_TABLE_KEYS) {
+        if (MASSIVE_HISTORY_TABLES.has(tableKey) && !includeLargeHistory) continue;
+        const table = (schema as any)[tableKey];
+        if (!table) continue;
+        
+        console.log(`Exporting table: ${tableKey}`);
+        
+        let totalCount = 0;
+        try {
+          const { count } = await import('drizzle-orm');
+          const countRes = await defaultDb.select({ value: count() }).from(table as any);
+          totalCount = Number(countRes[0].value || 0);
+        } catch (e: any) {
+          console.error(`Count error on ${tableKey}:`, e);
+          continue;
+        }
+
+        if (totalCount > 0) {
+          if (!firstTable) res.write(',');
+          firstTable = false;
+          
+          const tableName = table[Symbol.for('drizzle:Name')];
+          res.write(`"${tableName}":[`);
+          
+          const limit = 5000;
+          let offset = 0;
+          let firstRow = true;
+          
+          while (offset < totalCount) {
+            const chunk = await defaultDb.select().from(table as any).limit(limit).offset(offset);
+            if (chunk.length === 0) break;
+            
+            const chunkStr = JSON.stringify(chunk, (key, value) =>
+              typeof value === 'bigint' ? value.toString() : value
+            );
+            
+            // Remove the outer brackets [ ] from stringified array to stream inner objects
+            const innerStr = chunkStr.substring(1, chunkStr.length - 1);
+            
+            if (innerStr.length > 0) {
+              if (!firstRow) res.write(',');
+              res.write(innerStr);
+              firstRow = false;
+            }
+            
+            offset += limit;
+          }
+          
+          res.write(']');
+          console.log(`Table ${tableKey} exported: ${totalCount} records`);
+        }
+      }
+      
+      res.write('}');
+      res.end();
+      console.log('Export response sent entirely.');
     } catch (error: any) {
-      res.status(500).json({ error: error.message });
+      console.error('Export error:', error);
+      if (!res.headersSent) {
+        res.status(500).json({ error: error.message });
+      } else {
+        res.write(`,"ERROR_MSG":"${error.message}"}`);
+        res.end();
+      }
     }
   });
 

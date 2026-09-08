@@ -1,6 +1,7 @@
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
 import * as schema from './schema.ts';
+export { schema };
 
 declare global {
   var _postgresPool: Pool | undefined;
@@ -28,7 +29,7 @@ export const createPool = () => {
 };
 
 const defaultPool = createPool();
-const defaultDb = drizzle(defaultPool, { schema });
+export const defaultDb = drizzle(defaultPool, { schema });
 
 let currentPool = defaultPool;
 let currentDb = drizzle(currentPool, { schema });
@@ -140,7 +141,7 @@ export interface SyncResult {
 }
 
 // STRICT TOPOLOGICAL ORDER: Parent tables first, foreign-key dependent tables second, massive history last
-const ORDERED_TABLE_KEYS = [
+export const ORDERED_TABLE_KEYS = [
   // 1. Independent parent tables
   'users',
   'settings',
@@ -174,7 +175,7 @@ const ORDERED_TABLE_KEYS = [
   'cryptoCandles',
 ];
 
-const MASSIVE_HISTORY_TABLES = new Set(['assetData', 'tefasHistoricalNavs', 'cryptoCandles']);
+export const MASSIVE_HISTORY_TABLES = new Set(['assetData', 'tefasHistoricalNavs', 'cryptoCandles']);
 
 export const exportDatabaseToJson = async (includeLargeHistory = false): Promise<any> => {
   const exportData: Record<string, any[]> = {};
@@ -182,9 +183,17 @@ export const exportDatabaseToJson = async (includeLargeHistory = false): Promise
     if (MASSIVE_HISTORY_TABLES.has(tableKey) && !includeLargeHistory) continue;
     const table = (schema as any)[tableKey];
     if (!table) continue;
-    const records = await defaultDb.select().from(table as any);
-    if (records.length > 0) {
-      exportData[table[Symbol.for('drizzle:Name')]] = records;
+    
+    console.log(`Exporting table: ${tableKey}`);
+    try {
+      const records = await defaultDb.select().from(table as any);
+      if (records.length > 0) {
+        exportData[table[Symbol.for('drizzle:Name')]] = records;
+      }
+      console.log(`Table ${tableKey} exported: ${records.length} records`);
+    } catch (e: any) {
+      console.error(`Error exporting table ${tableKey}:`, e.message);
+      throw e;
     }
   }
   return exportData;
@@ -195,19 +204,31 @@ export const importDatabaseFromJson = async (data: Record<string, any[]>): Promi
   const errors: string[] = [];
   let totalRows = 0;
 
+  const isoDateRegex = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
+
   for (const tableKey of ORDERED_TABLE_KEYS) {
     const table = (schema as any)[tableKey];
     if (!table) continue;
-    const tableName = table[Symbol.for('drizzle:Name')];
-    const records = data[tableName];
     
-    if (!records || records.length === 0) continue;
+    const tableName = table[Symbol.for('drizzle:Name')];
+    // Destek olarak hem tableName hem de tableKey ile veriyi arayalım (eski/yeni export uyumluluğu)
+    const records = data[tableName] || data[tableKey];
+    
+    if (!records || !Array.isArray(records) || records.length === 0) continue;
 
     try {
       const chunkSize = 1000;
       let inserted = 0;
       for (let i = 0; i < records.length; i += chunkSize) {
-        const chunk = records.slice(i, i + chunkSize);
+        const chunk = records.slice(i, i + chunkSize).map(row => {
+          const parsedRow = { ...row };
+          for (const key of Object.keys(parsedRow)) {
+            if (typeof parsedRow[key] === 'string' && isoDateRegex.test(parsedRow[key])) {
+              parsedRow[key] = new Date(parsedRow[key]);
+            }
+          }
+          return parsedRow;
+        });
         await defaultDb.insert(table as any).values(chunk).onConflictDoNothing();
         inserted += chunk.length;
       }
