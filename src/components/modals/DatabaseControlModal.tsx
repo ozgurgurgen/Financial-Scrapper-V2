@@ -504,6 +504,112 @@ export default function DatabaseControlModal({ isOpen, onClose, settings, setSet
             )}
           </div>
 
+          {/* File Backup Hub (Export/Import) */}
+          <div className="p-5 bg-neutral-50/80 dark:bg-neutral-800/30 rounded-xl border border-neutral-200 dark:border-neutral-700/80 space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="text-sm font-bold text-neutral-900 dark:text-white flex items-center gap-2">
+                  <RefreshCw size={16} className="text-indigo-600 dark:text-indigo-400" />
+                  3. Veritabanı Yedekleme (JSON İndir / Yükle)
+                </h3>
+                <p className="text-xs text-neutral-500 mt-0.5">
+                  Veritabanını bilgisayarınıza dosya olarak indirebilir (Export) veya bir JSON dosyasından veritabanına veri yükleyebilirsiniz (Import).
+                </p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+              <button
+                type="button"
+                onClick={async () => {
+                  try {
+                    setSaving(true);
+                    const url = `/api/settings/db/export?includeLargeHistory=${includeHistory}`;
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = 'database_backup.json';
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    setMessage({ text: 'Veritabanı yedeği indiriliyor...', type: 'success' });
+                  } catch (err: any) {
+                    setMessage({ text: 'İndirme hatası: ' + err.message, type: 'error' });
+                  } finally {
+                    setSaving(false);
+                    setTimeout(() => setMessage(null), 3000);
+                  }
+                }}
+                disabled={saving || syncing}
+                className="p-3.5 rounded-xl border bg-indigo-50/60 hover:bg-indigo-100/70 border-indigo-200 text-indigo-900 dark:bg-indigo-950/20 dark:hover:bg-indigo-950/40 dark:border-indigo-800/60 dark:text-indigo-300 transition-all flex flex-col justify-between"
+              >
+                <div className="flex items-center justify-between mb-2">
+                  <span className="p-1.5 rounded-lg bg-indigo-200/60 dark:bg-indigo-900/50 text-indigo-700 dark:text-indigo-300">
+                    <ArrowDown size={16} />
+                  </span>
+                </div>
+                <div>
+                  <div className="font-bold text-xs">Yedeği İndir (Export)</div>
+                  <div className="text-[11px] text-neutral-500 dark:text-indigo-400/70 mt-0.5">
+                    Aktif veritabanındaki verileri JSON olarak bilgisayarınıza kaydeder.
+                  </div>
+                </div>
+              </button>
+
+              <label
+                className={`p-3.5 rounded-xl border text-left transition-all flex flex-col justify-between cursor-pointer ${
+                  saving || syncing 
+                    ? 'opacity-50 cursor-not-allowed bg-neutral-100 border-neutral-200 dark:bg-neutral-800 dark:border-neutral-700'
+                    : 'bg-teal-50/60 hover:bg-teal-100/70 border-teal-200 text-teal-900 dark:bg-teal-950/20 dark:hover:bg-teal-950/40 dark:border-teal-800/60 dark:text-teal-300'
+                }`}
+              >
+                <input 
+                  type="file" 
+                  accept=".json"
+                  className="hidden" 
+                  disabled={saving || syncing}
+                  onChange={async (e) => {
+                    const file = e.target.files?.[0];
+                    if (!file) return;
+                    try {
+                      setSaving(true);
+                      setMessage({ text: 'Dosya okunuyor ve yükleniyor, lütfen bekleyin...', type: 'success' });
+                      const text = await file.text();
+                      const data = JSON.parse(text);
+                      const res = await fetch('/api/settings/db/import', {
+                        method: 'POST',
+                        headers: await getHeaders(),
+                        body: JSON.stringify(data)
+                      });
+                      const json = await res.json();
+                      if (res.ok) {
+                        setMessage({ text: `İçe aktarım tamamlandı. Toplam ${json.totalRows} satır yüklendi.`, type: 'success' });
+                        setSyncDetails(json);
+                      } else {
+                        setMessage({ text: `Hata: ${json.error}`, type: 'error' });
+                      }
+                    } catch (err: any) {
+                      setMessage({ text: 'İçe aktarım hatası: ' + err.message, type: 'error' });
+                    } finally {
+                      setSaving(false);
+                      e.target.value = '';
+                    }
+                  }}
+                />
+                <div className="flex items-center justify-between mb-2">
+                  <span className="p-1.5 rounded-lg bg-teal-200/60 dark:bg-teal-900/50 text-teal-700 dark:text-teal-300">
+                    <ArrowUp size={16} />
+                  </span>
+                </div>
+                <div>
+                  <div className="font-bold text-xs">Yedek Yükle (Import)</div>
+                  <div className="text-[11px] text-neutral-500 dark:text-teal-400/70 mt-0.5">
+                    Seçtiğiniz JSON dosyasını aktif veritabanına aktarır.
+                  </div>
+                </div>
+              </label>
+            </div>
+          </div>
+
           {/* Sync Results & Breakdown */}
           {syncDetails && (
             <div className="p-4 bg-white dark:bg-neutral-900 rounded-xl border border-neutral-200 dark:border-neutral-700 space-y-3">

@@ -104,8 +104,8 @@ async function startServer() {
     next();
   });
 
-  app.use(express.json({ limit: '50mb' }));
-  app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+  app.use(express.json({ limit: '500mb' }));
+  app.use(express.urlencoded({ extended: true, limit: '500mb' }));
 
   // --- GLOBAL API TELEMETRY & DIAGNOSTICS MIDDLEWARE ---
   app.use((req, res, next) => {
@@ -1095,11 +1095,39 @@ async function startServer() {
         env.SQL_ADMIN_PASSWORD = config.password;
       }
 
-      const { stdout, stderr } = await execPromise('npx drizzle-kit push --config=./src/db/drizzle.config.ts', { env });
+      const { stdout, stderr } = await execPromise('npx drizzle-kit push --config=./src/db/drizzle.config.ts --force', { env });
       
       res.json({ success: true, message: 'Şema oluşturuldu/güncellendi.', output: stdout, errorOutput: stderr });
     } catch (error: any) {
       res.status(500).json({ error: error.message, details: error.stderr });
+    }
+  });
+
+  // Veritabanı JSON Export / Import
+  app.get('/api/settings/db/export', optionalAuth, async (req: AuthRequest, res) => {
+    try {
+      const includeLargeHistory = req.query.includeLargeHistory === 'true';
+      const { exportDatabaseToJson } = await import('./src/db/index.js');
+      const data = await exportDatabaseToJson(includeLargeHistory);
+      res.setHeader('Content-Type', 'application/json');
+      res.setHeader('Content-Disposition', 'attachment; filename="database_backup.json"');
+      res.json(data);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post('/api/settings/db/import', optionalAuth, async (req: AuthRequest, res) => {
+    try {
+      const data = req.body;
+      if (!data || typeof data !== 'object') {
+        return res.status(400).json({ error: 'Geçersiz veri formatı. JSON nesnesi bekleniyor.' });
+      }
+      const { importDatabaseFromJson } = await import('./src/db/index.js');
+      const result = await importDatabaseFromJson(data);
+      res.json({ success: true, message: 'Veri içe aktarma tamamlandı.', ...result });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
     }
   });
 

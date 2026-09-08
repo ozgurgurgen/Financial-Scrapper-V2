@@ -176,6 +176,51 @@ const ORDERED_TABLE_KEYS = [
 
 const MASSIVE_HISTORY_TABLES = new Set(['assetData', 'tefasHistoricalNavs', 'cryptoCandles']);
 
+export const exportDatabaseToJson = async (includeLargeHistory = false): Promise<any> => {
+  const exportData: Record<string, any[]> = {};
+  for (const tableKey of ORDERED_TABLE_KEYS) {
+    if (MASSIVE_HISTORY_TABLES.has(tableKey) && !includeLargeHistory) continue;
+    const table = (schema as any)[tableKey];
+    if (!table) continue;
+    const records = await defaultDb.select().from(table as any);
+    if (records.length > 0) {
+      exportData[table[Symbol.for('drizzle:Name')]] = records;
+    }
+  }
+  return exportData;
+};
+
+export const importDatabaseFromJson = async (data: Record<string, any[]>): Promise<SyncResult> => {
+  const tableStats: Record<string, number> = {};
+  const errors: string[] = [];
+  let totalRows = 0;
+
+  for (const tableKey of ORDERED_TABLE_KEYS) {
+    const table = (schema as any)[tableKey];
+    if (!table) continue;
+    const tableName = table[Symbol.for('drizzle:Name')];
+    const records = data[tableName];
+    
+    if (!records || records.length === 0) continue;
+
+    try {
+      const chunkSize = 1000;
+      let inserted = 0;
+      for (let i = 0; i < records.length; i += chunkSize) {
+        const chunk = records.slice(i, i + chunkSize);
+        await defaultDb.insert(table as any).values(chunk).onConflictDoNothing();
+        inserted += chunk.length;
+      }
+      tableStats[tableName] = inserted;
+      totalRows += inserted;
+    } catch (e: any) {
+      errors.push(`Table ${tableName} import error: ${e.message}`);
+    }
+  }
+
+  return { totalRows, tableStats, errors };
+};
+
 export const syncFromCloudToLocal = async (options: SyncOptions = {}): Promise<SyncResult> => {
   if (currentPool === defaultPool) {
     throw new Error('Şu an zaten varsayılan Cloud veritabanına bağlısınız. Hedef Local veritabanı olmalıdır. Lütfen önce Local DB seçip "Bağlantıyı Uygula" butonuna basınız.');
