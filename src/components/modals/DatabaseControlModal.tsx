@@ -313,16 +313,6 @@ export default function DatabaseControlModal({ isOpen, onClose, settings, setSet
           {/* Local PostgreSQL Config Form */}
           {isLocalActive && (
             <div className="p-5 bg-neutral-50 dark:bg-neutral-800/40 rounded-xl border border-neutral-200 dark:border-neutral-700/80 space-y-4">
-              <div className="p-3 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800/60 rounded-lg text-xs text-amber-800 dark:text-amber-300 space-y-1">
-                <div className="font-bold flex items-center gap-1.5">
-                  <AlertTriangle size={14} className="text-amber-600" />
-                  Bulut Ortamı & Localhost Uyarısı
-                </div>
-                <p>
-                  Uygulama bulut konteynerinde çalıştığı için <code>localhost:5432</code> adresi sizin bilgisayarınıza değil bulut sunucusuna bakar. Kendi yerel PostgreSQL sunucunuzu bağlamak için <code>ngrok tcp 5432</code> tünel adresini veya ücretsiz bir bulut veritabanını (Neon/Supabase) kullanınız.
-                </p>
-              </div>
-
               <div>
                 <div className="flex items-center justify-between mb-1.5">
                   <label className="block text-xs font-bold uppercase tracking-wider text-neutral-600 dark:text-neutral-300">
