@@ -579,7 +579,7 @@ export default function DatabaseControlModal({ isOpen, onClose, settings, setSet
               >
                 <input 
                   type="file" 
-                  accept=".json"
+                  accept=".json,.gz,.json.gz"
                   className="hidden" 
                   disabled={saving || syncing}
                   onChange={async (e) => {
@@ -587,39 +587,18 @@ export default function DatabaseControlModal({ isOpen, onClose, settings, setSet
                     if (!file) return;
                     try {
                       setSaving(true);
-                      setMessage({ text: 'Dosya okunuyor ve sunucuya iletiliyor, lütfen bekleyin...', type: 'success' });
-                      
-                      const text = await file.text();
-                      
-                      // Pre-validate JSON format on client side to catch incomplete downloads early
-                      try {
-                        JSON.parse(text);
-                      } catch {
-                        throw new Error('Seçilen yedek dosyası eksik veya indirme esnasında yarıda kesilmiş (Geçersiz JSON). Çözüm: "Tarihsel fiyat barlarını da aktar" kutusunu KALDIRIP tekrar indiriniz veya ekranın üstündeki "Cloud ➔ Local Senkronizasyonu" butonunu kullanınız.');
-                      }
+                      setMessage({ text: 'Yedek dosyası canlı olarak sunucuya aktarılıyor ve veritabanına işleniyor...', type: 'success' });
 
-                      // Compress payload with GZIP on client side if large to prevent HTTP payload timeouts
-                      let bodyData: any = text;
-                      let isGzip = false;
-                      if (typeof CompressionStream !== 'undefined' && text.length > 300000) {
-                        try {
-                          const blob = new Blob([text], { type: 'application/json' });
-                          const compressedStream = blob.stream().pipeThrough(new CompressionStream('gzip'));
-                          bodyData = await new Response(compressedStream).arrayBuffer();
-                          isGzip = true;
-                        } catch {
-                          bodyData = text;
-                        }
-                      }
+                      const isGzip = file.name.endsWith('.gz') || file.type.includes('gzip');
 
                       const res = await fetch('/api/settings/db/import', {
                         method: 'POST',
                         headers: {
                           ...(await getHeaders()),
-                          'Content-Type': 'application/json',
+                          'Content-Type': 'application/octet-stream',
                           ...(isGzip ? { 'Content-Encoding': 'gzip' } : {})
                         },
-                        body: bodyData
+                        body: file
                       });
 
                       const resText = await res.text();
@@ -627,7 +606,7 @@ export default function DatabaseControlModal({ isOpen, onClose, settings, setSet
                       try {
                         json = JSON.parse(resText);
                       } catch {
-                        throw new Error(`Sunucu yanıt veremedi (HTTP ${res.status}). Dosya boyutu çok büyük olduğu için zaman aşımı yaşanmış olabilir. Büyük tarihsel veriler için ekranın üstündeki "Cloud ➔ Local Senkronizasyonu" butonunu kullanabilirsiniz.`);
+                        throw new Error(`Sunucu yanıt veremedi (HTTP ${res.status}).`);
                       }
 
                       if (res.ok) {

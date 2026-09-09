@@ -1232,24 +1232,28 @@ async function startServer() {
     try {
       req.socket.setTimeout(0);
       res.setTimeout(0);
-      let data = req.body;
       
-      // If client sent compressed buffer or raw gzip body, decompress it
-      if (Buffer.isBuffer(data) || req.headers['content-encoding'] === 'gzip') {
-        const zlib = await import('zlib');
-        const decompressed = zlib.gunzipSync(Buffer.isBuffer(data) ? data : req.body);
-        data = JSON.parse(decompressed.toString('utf-8'));
-      } else if (typeof data === 'string') {
-        data = JSON.parse(data);
+      const { importDatabaseFromStream, importDatabaseFromJson } = await import('./src/db/index.js');
+      let result: any;
+
+      if (req.body && typeof req.body === 'object' && Object.keys(req.body).length > 0 && !Buffer.isBuffer(req.body)) {
+        // Parsed body (small JSON object)
+        result = await importDatabaseFromJson(req.body);
+      } else if (typeof req.body === 'string' && req.body.length > 0) {
+        try {
+          const parsed = JSON.parse(req.body);
+          result = await importDatabaseFromJson(parsed);
+        } catch {
+          result = await importDatabaseFromStream(req);
+        }
+      } else {
+        // Stream directly from req stream for unlimited file size (e.g. 1GB / 100GB / GZIP)
+        result = await importDatabaseFromStream(req);
       }
-      
-      if (!data || typeof data !== 'object') {
-        return res.status(400).json({ error: 'Geçersiz veri formatı. JSON nesnesi bekleniyor.' });
-      }
-      const { importDatabaseFromJson } = await import('./src/db/index.js');
-      const result = await importDatabaseFromJson(data);
+
       res.json({ success: true, message: 'Veri içe aktarma tamamlandı.', ...result });
     } catch (error: any) {
+      console.error('Import endpoint error:', error);
       res.status(500).json({ error: error.message });
     }
   });

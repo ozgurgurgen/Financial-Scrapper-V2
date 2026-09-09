@@ -1,6 +1,8 @@
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { sql } from 'drizzle-orm';
 import { Pool } from 'pg';
+import zlib from 'zlib';
+import { Readable } from 'stream';
 import * as schema from './schema.ts';
 export { schema };
 
@@ -245,6 +247,102 @@ export const importDatabaseFromJson = async (data: Record<string, any[]>): Promi
     } catch (e: any) {
       errors.push(`Table ${tableName} import error: ${e.message}`);
     }
+  }
+
+  return { totalRows, tableStats, errors };
+};
+
+function autoDecompressStream(reqStream: Readable): Promise<Readable> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    const onData = (chunk: Buffer) => {
+      chunks.push(chunk);
+      reqStream.off('data', onData);
+      reqStream.off('error', reject);
+      reqStream.pause();
+
+      const first = chunks[0];
+      const isGzip = first && first.length >= 2 && first[0] === 0x1f && first[1] === 0x8b;
+
+      const combined = Readable.from((async function* () {
+        for (const c of chunks) yield c;
+        for await (const c of reqStream) yield c;
+      })());
+
+      if (isGzip) {
+        resolve(combined.pipe(zlib.createGunzip()));
+      } else {
+        resolve(combined);
+      }
+    };
+
+    reqStream.on('data', onData);
+    reqStream.on('error', reject);
+  });
+}
+
+export const importDatabaseFromStream = async (reqStream: Readable): Promise<SyncResult> => {
+  const tableStats: Record<string, number> = {};
+  const errors: string[] = [];
+  let totalRows = 0;
+
+  const isoDateRegex = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
+
+  const schemaMap: Record<string, any> = {};
+  for (const tableKey of ORDERED_TABLE_KEYS) {
+    const table = (schema as any)[tableKey];
+    if (table) {
+      const tableName = table[Symbol.for('drizzle:Name')];
+      if (tableName) schemaMap[tableName] = table;
+      schemaMap[tableKey] = table;
+    }
+  }
+
+  try {
+    const decompressedStream = await autoDecompressStream(reqStream);
+    const streamObjectModule = await import('stream-json/streamers/stream-object.js');
+    const streamObject = streamObjectModule.default;
+    const jsonPipeline = decompressedStream.pipe(streamObject.withParserAsStream());
+
+    for await (const data of jsonPipeline) {
+      const { key, value: records } = data;
+      const table = schemaMap[key];
+      if (!table || !records || !Array.isArray(records) || records.length === 0) continue;
+
+      const tableName = table[Symbol.for('drizzle:Name')];
+
+      try {
+        const chunkSize = 1000;
+        let inserted = 0;
+        for (let i = 0; i < records.length; i += chunkSize) {
+          const chunk = records.slice(i, i + chunkSize).map((row: any) => {
+            const parsedRow = { ...row };
+            for (const k of Object.keys(parsedRow)) {
+              if (typeof parsedRow[k] === 'string' && isoDateRegex.test(parsedRow[k])) {
+                parsedRow[k] = new Date(parsedRow[k]);
+              }
+            }
+            return parsedRow;
+          });
+          await currentDb.insert(table as any).values(chunk).onConflictDoNothing();
+          inserted += chunk.length;
+        }
+        tableStats[tableName] = (tableStats[tableName] || 0) + inserted;
+        totalRows += inserted;
+
+        try {
+          await currentPool.query(`SELECT setval(pg_get_serial_sequence('"${tableName}"', 'id'), COALESCE(max(id), 1), max(id) IS NOT null) FROM "${tableName}"`);
+        } catch {
+          // Sequence does not exist for non-serial PK tables, safe to ignore
+        }
+      } catch (e: any) {
+        console.error(`Table ${tableName} streaming import error:`, e.message);
+        errors.push(`Table ${tableName} import error: ${e.message}`);
+      }
+    }
+  } catch (err: any) {
+    console.error('Fatal streaming import error:', err.message);
+    errors.push(`Akış okuma hatası: ${err.message}`);
   }
 
   return { totalRows, tableStats, errors };
