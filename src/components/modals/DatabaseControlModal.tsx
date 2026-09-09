@@ -572,20 +572,40 @@ export default function DatabaseControlModal({ isOpen, onClose, settings, setSet
                     if (!file) return;
                     try {
                       setSaving(true);
-                      setMessage({ text: 'Dosya okunuyor ve yükleniyor, lütfen bekleyin...', type: 'success' });
+                      setMessage({ text: 'Dosya okunuyor ve sunucuya iletiliyor, lütfen bekleyin...', type: 'success' });
+                      
                       const text = await file.text();
-                      const data = JSON.parse(text);
+                      
+                      // Pre-validate JSON format on client side to catch incomplete downloads early
+                      try {
+                        JSON.parse(text);
+                      } catch {
+                        throw new Error('Seçilen yedek dosyası eksik veya indirilirken yarıda kesintiye uğramış (Geçersiz/Eksik JSON). Lütfen yedeği tekrar indirin veya yukarıdaki "Cloud ➔ Local Senkronizasyonu" butonunu kullanın.');
+                      }
+
+                      // Send raw text body to avoid doubling memory usage with JSON.stringify
                       const res = await fetch('/api/settings/db/import', {
                         method: 'POST',
-                        headers: await getHeaders(),
-                        body: JSON.stringify(data)
+                        headers: {
+                          ...(await getHeaders()),
+                          'Content-Type': 'application/json'
+                        },
+                        body: text
                       });
-                      const json = await res.json();
+
+                      const resText = await res.text();
+                      let json: any;
+                      try {
+                        json = JSON.parse(resText);
+                      } catch {
+                        throw new Error(`Sunucu yanıt veremedi (HTTP ${res.status}). Dosya boyutu çok büyük olduğu için zaman aşımı yaşanmış olabilir. Büyük tarihsel veriler için ekranın üstündeki "Cloud ➔ Local Senkronizasyonu" butonunu kullanabilirsiniz.`);
+                      }
+
                       if (res.ok) {
-                        setMessage({ text: `İçe aktarım tamamlandı. Toplam ${json.totalRows} satır yüklendi.`, type: 'success' });
+                        setMessage({ text: `İçe aktarım tamamlandı. Toplam ${json.totalRows?.toLocaleString('tr-TR')} satır yüklendi.`, type: 'success' });
                         setSyncDetails(json);
                       } else {
-                        setMessage({ text: `Hata: ${json.error}`, type: 'error' });
+                        setMessage({ text: `Hata: ${json.error || 'İçe aktarım başarısız oldu.'}`, type: 'error' });
                       }
                     } catch (err: any) {
                       setMessage({ text: 'İçe aktarım hatası: ' + err.message, type: 'error' });

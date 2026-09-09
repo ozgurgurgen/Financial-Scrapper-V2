@@ -1106,6 +1106,8 @@ async function startServer() {
   // Veritabanı JSON Export / Import
   app.get('/api/settings/db/export', optionalAuth, async (req: AuthRequest, res) => {
     try {
+      req.socket.setTimeout(0);
+      res.setTimeout(0);
       console.log('Export requested');
       const includeLargeHistory = req.query.includeLargeHistory === 'true';
       
@@ -1195,7 +1197,6 @@ async function startServer() {
       if (!res.headersSent) {
         res.status(500).json({ error: error.message });
       } else {
-        res.write(`,"ERROR_MSG":"${error.message}"}`);
         res.end();
       }
     }
@@ -1203,7 +1204,12 @@ async function startServer() {
 
   app.post('/api/settings/db/import', optionalAuth, async (req: AuthRequest, res) => {
     try {
-      const data = req.body;
+      req.socket.setTimeout(0);
+      res.setTimeout(0);
+      let data = req.body;
+      if (typeof data === 'string') {
+        data = JSON.parse(data);
+      }
       if (!data || typeof data !== 'object') {
         return res.status(400).json({ error: 'Geçersiz veri formatı. JSON nesnesi bekleniyor.' });
       }
