@@ -1228,6 +1228,97 @@ async function startServer() {
     }
   });
 
+  // Active Chunked Import Sessions Map
+  const activeImportSessions = new Map<string, {
+    id: string;
+    stream: import('stream').PassThrough;
+    importPromise: Promise<any>;
+    createdAt: number;
+  }>();
+
+  setInterval(() => {
+    const now = Date.now();
+    for (const [id, session] of activeImportSessions.entries()) {
+      if (now - session.createdAt > 15 * 60 * 1000) {
+        session.stream.destroy();
+        activeImportSessions.delete(id);
+      }
+    }
+  }, 60 * 1000);
+
+  app.post('/api/settings/db/import-session', optionalAuth, async (req: AuthRequest, res) => {
+    try {
+      const { PassThrough } = await import('stream');
+      const sessionId = 'session_' + Math.random().toString(36).substring(2, 11) + '_' + Date.now();
+      const stream = new PassThrough();
+
+      const { importDatabaseFromStream } = await import('./src/db/index.js');
+      const importPromise = importDatabaseFromStream(stream);
+
+      activeImportSessions.set(sessionId, {
+        id: sessionId,
+        stream,
+        importPromise,
+        createdAt: Date.now()
+      });
+
+      res.json({ success: true, sessionId });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post('/api/settings/db/import-chunk', optionalAuth, express.raw({ limit: '50mb', type: '*/*' }), async (req: AuthRequest, res) => {
+    try {
+      const sessionId = (req.headers['x-session-id'] || req.query.sessionId) as string;
+      const session = activeImportSessions.get(sessionId);
+      if (!session) {
+        return res.status(404).json({ error: 'Geçersiz veya zaman aşımına uğramış içe aktarım oturumu.' });
+      }
+
+      const chunkBuffer = req.body;
+      if (chunkBuffer && Buffer.isBuffer(chunkBuffer) && chunkBuffer.length > 0) {
+        session.stream.write(chunkBuffer);
+      }
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post('/api/settings/db/import-finish', optionalAuth, async (req: AuthRequest, res) => {
+    try {
+      const sessionId = (req.headers['x-session-id'] || req.query.sessionId) as string;
+      const session = activeImportSessions.get(sessionId);
+      if (!session) {
+        return res.status(404).json({ error: 'Geçersiz veya zaman aşımına uğramış içe aktarım oturumu.' });
+      }
+
+      session.stream.end();
+      const result = await session.importPromise;
+      activeImportSessions.delete(sessionId);
+
+      res.json({ success: true, message: 'Veri içe aktarma tamamlandı.', ...result });
+    } catch (error: any) {
+      console.error('Import finish error:', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post('/api/settings/db/import-cancel', optionalAuth, async (req: AuthRequest, res) => {
+    try {
+      const sessionId = (req.headers['x-session-id'] || req.query.sessionId) as string;
+      const session = activeImportSessions.get(sessionId);
+      if (session) {
+        session.stream.destroy();
+        activeImportSessions.delete(sessionId);
+      }
+      res.json({ success: true });
+    } catch {
+      res.json({ success: true });
+    }
+  });
+
   app.post('/api/settings/db/import', optionalAuth, async (req: AuthRequest, res) => {
     try {
       req.socket.setTimeout(0);

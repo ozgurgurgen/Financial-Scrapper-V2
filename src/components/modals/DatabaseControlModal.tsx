@@ -585,37 +585,86 @@ export default function DatabaseControlModal({ isOpen, onClose, settings, setSet
                   onChange={async (e) => {
                     const file = e.target.files?.[0];
                     if (!file) return;
+
+                    let sessionId: string | null = null;
                     try {
                       setSaving(true);
-                      setMessage({ text: 'Yedek dosyası canlı olarak sunucuya aktarılıyor ve veritabanına işleniyor...', type: 'success' });
+                      setMessage({ text: 'İçe aktarım oturumu başlatılıyor...', type: 'success' });
 
-                      const isGzip = file.name.endsWith('.gz') || file.type.includes('gzip');
+                      // 1. Start chunked session
+                      const sessionRes = await fetch('/api/settings/db/import-session', {
+                        method: 'POST',
+                        headers: await getHeaders()
+                      });
+                      const sessionJson = await sessionRes.json();
+                      if (!sessionRes.ok || !sessionJson.sessionId) {
+                        throw new Error(sessionJson.error || 'Oturum başlatılamadı.');
+                      }
+                      sessionId = sessionJson.sessionId;
 
-                      const res = await fetch('/api/settings/db/import', {
+                      // 2. Upload file in 8 MB chunks
+                      const CHUNK_SIZE = 8 * 1024 * 1024;
+                      const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
+
+                      for (let i = 0; i < totalChunks; i++) {
+                        const start = i * CHUNK_SIZE;
+                        const end = Math.min(start + CHUNK_SIZE, file.size);
+                        const chunkBlob = file.slice(start, end);
+
+                        const percent = Math.round(((i + 1) / totalChunks) * 100);
+                        const totalMb = (file.size / (1024 * 1024)).toFixed(1);
+                        setMessage({ 
+                          text: `Yedek aktarılıyor: Parça ${i + 1}/${totalChunks} (%${percent} - Toplam ${totalMb} MB)...`, 
+                          type: 'success' 
+                        });
+
+                        const chunkRes = await fetch(`/api/settings/db/import-chunk?sessionId=${encodeURIComponent(sessionId!)}`, {
+                          method: 'POST',
+                          headers: {
+                            ...(await getHeaders()),
+                            'x-session-id': sessionId!,
+                            'Content-Type': 'application/octet-stream'
+                          },
+                          body: chunkBlob
+                        });
+
+                        if (!chunkRes.ok) {
+                          const errJson = await chunkRes.json().catch(() => ({}));
+                          throw new Error(errJson.error || `Parça ${i + 1} aktarılırken sunucu bağlantısı kesildi.`);
+                        }
+                      }
+
+                      // 3. Finish session and apply inserts
+                      setMessage({ text: 'Veriler veritabanına işleniyor, lütfen bekleyin...', type: 'success' });
+                      const finishRes = await fetch(`/api/settings/db/import-finish?sessionId=${encodeURIComponent(sessionId!)}`, {
                         method: 'POST',
                         headers: {
                           ...(await getHeaders()),
-                          'Content-Type': 'application/octet-stream',
-                          ...(isGzip ? { 'Content-Encoding': 'gzip' } : {})
-                        },
-                        body: file
+                          'x-session-id': sessionId!
+                        }
                       });
 
-                      const resText = await res.text();
+                      const resText = await finishRes.text();
                       let json: any;
                       try {
                         json = JSON.parse(resText);
                       } catch {
-                        throw new Error(`Sunucu yanıt veremedi (HTTP ${res.status}).`);
+                        throw new Error(`Sunucu yanıt veremedi (HTTP ${finishRes.status}).`);
                       }
 
-                      if (res.ok) {
-                        setMessage({ text: `İçe aktarım tamamlandı. Toplam ${json.totalRows?.toLocaleString('tr-TR')} satır yüklendi.`, type: 'success' });
+                      if (finishRes.ok) {
+                        setMessage({ text: `İçe aktarım tamamlandı! Toplam ${json.totalRows?.toLocaleString('tr-TR')} satır yüklendi.`, type: 'success' });
                         setSyncDetails(json);
                       } else {
                         setMessage({ text: `Hata: ${json.error || 'İçe aktarım başarısız oldu.'}`, type: 'error' });
                       }
                     } catch (err: any) {
+                      if (sessionId) {
+                        fetch(`/api/settings/db/import-cancel?sessionId=${encodeURIComponent(sessionId)}`, {
+                          method: 'POST',
+                          headers: { ...(await getHeaders()), 'x-session-id': sessionId }
+                        }).catch(() => {});
+                      }
                       setMessage({ text: 'İçe aktarım hatası: ' + err.message, type: 'error' });
                     } finally {
                       setSaving(false);
