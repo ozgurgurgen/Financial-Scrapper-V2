@@ -315,13 +315,20 @@ export class KAPAdapter implements DataSourceAdapter {
         }];
 
         // 5. Upsert into database
+        const safeIndex = String(index).trim().substring(0, 50);
+        const safeSymbol = symbol ? String(symbol).trim().substring(0, 50) : null;
+        const safeCompanyName = companyTitle ? String(companyTitle).trim().substring(0, 255) : null;
+        const safeCategory = categoryFormatted ? String(categoryFormatted).trim().substring(0, 200) : null;
+        const safeTitle = `${companyTitle} - ${title}`;
+
         await db.insert(kapDisclosures)
           .values({
-            disclosureIndex: index,
-            symbol: symbol,
-            title: `${companyTitle} - ${title}`,
+            disclosureIndex: safeIndex,
+            symbol: safeSymbol,
+            companyName: safeCompanyName,
+            title: safeTitle,
             publishDate: publishDate,
-            category: categoryFormatted,
+            category: safeCategory,
             summary: aiSummary || basic.summary || null,
             fullText: fullText,
             hasAttachment: attachmentList.length > 0,
@@ -333,9 +340,11 @@ export class KAPAdapter implements DataSourceAdapter {
           .onConflictDoUpdate({
             target: kapDisclosures.disclosureIndex,
             set: {
-              title: `${companyTitle} - ${title}`,
+              symbol: safeSymbol,
+              companyName: safeCompanyName,
+              title: safeTitle,
               publishDate: publishDate,
-              category: categoryFormatted,
+              category: safeCategory,
               summary: aiSummary || basic.summary || null,
               fullText: fullText,
               hasAttachment: attachmentList.length > 0,

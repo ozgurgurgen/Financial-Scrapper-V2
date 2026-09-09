@@ -1,4 +1,5 @@
 import * as cron from 'node-cron';
+import { CronExpressionParser } from 'cron-parser';
 import { db } from '../db/index.ts';
 import { syncLogs, settings, bistStocks, tefasFunds, assetData, kapDisclosures } from '../db/schema.ts';
 import { eq, sql } from 'drizzle-orm';
@@ -19,6 +20,7 @@ export interface ScheduledTaskInfo {
   intervalDescription: string;
   category: 'BIST' | 'TEFAS' | 'KAP' | 'CRYPTO' | 'MACRO' | 'FX' | 'BACKFILL';
   lastRunAt: string | null;
+  nextRunAt?: string | null;
   lastStatus: 'IDLE' | 'RUNNING' | 'SUCCESS' | 'ERROR';
   lastRecordsProcessed: number;
   lastMessage: string | null;
@@ -354,10 +356,26 @@ class AutomatedSchedulerService {
     tasks: ScheduledTaskInfo[];
     totalScheduledJobs: number;
   } {
+    const tasksWithNextRun = Array.from(this.tasks.values()).map(task => {
+      let nextRunAt: string | null = null;
+      if (task.enabled && task.cronExpr) {
+        try {
+          const interval = CronExpressionParser.parse(task.cronExpr);
+          nextRunAt = interval.next().toDate().toISOString();
+        } catch (err) {
+          nextRunAt = null;
+        }
+      }
+      return {
+        ...task,
+        nextRunAt
+      };
+    });
+
     return {
       isSchedulerActive: this.isInitialized,
       uptimeSeconds: Math.floor(process.uptime()),
-      tasks: Array.from(this.tasks.values()),
+      tasks: tasksWithNextRun,
       totalScheduledJobs: this.cronJobs.size
     };
   }
@@ -388,6 +406,40 @@ class AutomatedSchedulerService {
       console.error('[AutomatedScheduler] Ayar kaydetme hatası:', err);
     }
 
+    return true;
+  }
+
+  public async updateTaskSchedule(taskId: string, cronExpr: string, enabled?: boolean): Promise<boolean> {
+    const task = this.tasks.get(taskId);
+    if (!task) return false;
+
+    if (enabled !== undefined) {
+      task.enabled = enabled;
+    }
+    task.cronExpr = cronExpr;
+    
+    // Reschedule
+    this.scheduleTask(taskId);
+
+    // Save to settings table
+    try {
+      await db.insert(settings)
+        .values({
+          key: `scheduler_task_${taskId}`,
+          value: { enabled: task.enabled, cronExpr: task.cronExpr },
+          updatedAt: new Date()
+        })
+        .onConflictDoUpdate({
+          target: settings.key,
+          set: {
+            value: { enabled: task.enabled, cronExpr: task.cronExpr },
+            updatedAt: new Date()
+          }
+        });
+    } catch (err) {
+      console.error('[AutomatedScheduler] Ayar kaydetme hatası:', err);
+    }
+    
     return true;
   }
 }

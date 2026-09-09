@@ -2283,6 +2283,26 @@ SELECT pg_size_pretty(pg_database_size(current_database())) AS current_database_
     }
   });
 
+  // 13. Zamanlanmış Görev Düzenle
+  app.post('/api/v1/scheduler/update/:taskId', async (req, res) => {
+    try {
+      const { cronExpr, enabled } = req.body;
+      if (!cronExpr) {
+        return res.status(400).json({ success: false, error: 'cronExpr gereklidir' });
+      }
+      
+      const isValid = (await import('node-cron')).validate(cronExpr);
+      if (!isValid) {
+         return res.status(400).json({ success: false, error: 'Geçersiz cron ifadesi' });
+      }
+
+      const success = await automatedSchedulerService.updateTaskSchedule(req.params.taskId, cronExpr, enabled);
+      res.json({ success, taskId: req.params.taskId });
+    } catch (error: any) {
+      res.status(500).json({ success: false, error: error.message });
+    }
+  });
+
   // =========================================================================
   // ZERO-DOWNTIME RESILIENCE & MULTI-TIER RECOVERY API ENDPOINTS
   // =========================================================================
