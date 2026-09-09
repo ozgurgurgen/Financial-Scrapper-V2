@@ -281,6 +281,109 @@ function autoDecompressStream(reqStream: Readable): Promise<Readable> {
   });
 }
 
+async function* parseStreamingTables(inputStream: Readable) {
+  let buffer = '';
+  let currentTable: string | null = null;
+  let inArray = false;
+  let currentRecords: any[] = [];
+
+  for await (const chunk of inputStream) {
+    buffer += typeof chunk === 'string' ? chunk : chunk.toString('utf-8');
+
+    while (buffer.length > 0) {
+      if (!currentTable) {
+        const match = buffer.match(/\"([^\"]+)\"\s*:\s*\[/);
+        if (!match) {
+          if (buffer.length > 200) {
+            buffer = buffer.slice(-100);
+          }
+          break;
+        }
+
+        currentTable = match[1];
+        const matchIndex = match.index + match[0].length;
+        buffer = buffer.slice(matchIndex);
+        inArray = true;
+        currentRecords = [];
+      }
+
+      if (inArray) {
+        let objStart = -1;
+        let depth = 0;
+        let inString = false;
+        let isEscaped = false;
+        let parsedUntilIndex = 0;
+        let arrayEnded = false;
+
+        for (let i = 0; i < buffer.length; i++) {
+          const char = buffer[i];
+
+          if (isEscaped) {
+            isEscaped = false;
+            continue;
+          }
+
+          if (char === '\\') {
+            isEscaped = true;
+            continue;
+          }
+
+          if (char === '"') {
+            inString = !inString;
+            continue;
+          }
+
+          if (inString) continue;
+
+          if (char === '{') {
+            if (depth === 0) objStart = i;
+            depth++;
+          } else if (char === '}') {
+            depth--;
+            if (depth === 0 && objStart !== -1) {
+              const objStr = buffer.substring(objStart, i + 1);
+              try {
+                currentRecords.push(JSON.parse(objStr));
+              } catch (err: any) {
+                console.error('Parse error on object chunk:', err);
+              }
+              objStart = -1;
+              parsedUntilIndex = i + 1;
+            }
+          } else if (char === ']' && depth === 0) {
+            arrayEnded = true;
+            parsedUntilIndex = i + 1;
+            break;
+          }
+        }
+
+        if (parsedUntilIndex > 0) {
+          buffer = buffer.slice(parsedUntilIndex);
+        }
+
+        if (arrayEnded) {
+          if (currentRecords.length > 0) {
+            yield { key: currentTable, records: currentRecords };
+          }
+          currentTable = null;
+          inArray = false;
+          currentRecords = [];
+        } else {
+          if (currentRecords.length >= 1000) {
+            yield { key: currentTable, records: [...currentRecords] };
+            currentRecords = [];
+          }
+          break;
+        }
+      }
+    }
+  }
+
+  if (currentTable && currentRecords.length > 0) {
+    yield { key: currentTable, records: currentRecords };
+  }
+}
+
 export const importDatabaseFromStream = async (reqStream: Readable): Promise<SyncResult> => {
   const tableStats: Record<string, number> = {};
   const errors: string[] = [];
@@ -300,12 +403,9 @@ export const importDatabaseFromStream = async (reqStream: Readable): Promise<Syn
 
   try {
     const decompressedStream = await autoDecompressStream(reqStream);
-    const streamObjectModule = await import('stream-json/streamers/stream-object.js');
-    const streamObject = streamObjectModule.default;
-    const jsonPipeline = decompressedStream.pipe(streamObject.withParserAsStream());
 
-    for await (const data of jsonPipeline) {
-      const { key, value: records } = data;
+    for await (const data of parseStreamingTables(decompressedStream)) {
+      const { key, records } = data;
       const table = schemaMap[key];
       if (!table || !records || !Array.isArray(records) || records.length === 0) continue;
 
