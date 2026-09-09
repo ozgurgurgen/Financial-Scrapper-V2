@@ -513,9 +513,24 @@ export default function DatabaseControlModal({ isOpen, onClose, settings, setSet
                   3. Veritabanı Yedekleme (JSON İndir / Yükle)
                 </h3>
                 <p className="text-xs text-neutral-500 mt-0.5">
-                  Veritabanını bilgisayarınıza dosya olarak indirebilir (Export) veya bir JSON dosyasından veritabanına veri yükleyebilirsiniz (Import).
+                  Veritabanı verilerinizi bilgisayarınıza JSON olarak kaydedebilir veya yedekten yükleyebilirsiniz.
                 </p>
               </div>
+            </div>
+
+            {/* Explanatory Tip Box */}
+            <div className="p-3 bg-indigo-50/60 dark:bg-indigo-950/30 border border-indigo-200 dark:border-indigo-800/50 rounded-lg text-xs text-indigo-900 dark:text-indigo-300 space-y-1">
+              <div className="font-semibold flex items-center gap-1.5">
+                <span>💡 Hangi Yöntemi Kullanmalıyım?</span>
+              </div>
+              <ul className="list-disc list-inside text-[11px] space-y-1 text-indigo-800 dark:text-indigo-300/90 pl-1">
+                <li>
+                  <b>Hızlı JSON Yedeği (Önerilen):</b> "Tarihsel fiyat barları" kutusu işaretsizken indirilir (~15MB). Bütün ayarlar, hisseler, fonlar, kriptolar, bildirimler ve en son fiyatları kapsar (%100 sorunsuz iner ve yüklenir).
+                </li>
+                <li>
+                  <b>+2.5 Milyon Tarihsel Bar Aktarımı:</b> Tarihsel fiyat barlarını da taşımak istediğinizde dosya boyutu çok büyüdüğünden dosya indirmek yerine yukarıdaki <b>"Cloud ➔ Local Senkronizasyonu"</b> butonunu kullanmanız önerilir.
+                </li>
+              </ul>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
@@ -527,16 +542,16 @@ export default function DatabaseControlModal({ isOpen, onClose, settings, setSet
                     const url = `/api/settings/db/export?includeLargeHistory=${includeHistory}`;
                     const a = document.createElement('a');
                     a.href = url;
-                    a.download = 'database_backup.json';
+                    a.download = includeHistory ? 'database_backup_full_history.json' : 'database_backup.json';
                     document.body.appendChild(a);
                     a.click();
                     document.body.removeChild(a);
-                    setMessage({ text: 'Veritabanı yedeği indiriliyor...', type: 'success' });
+                    setMessage({ text: includeHistory ? 'Tüm veritabanı yedeği indiriliyor (büyük dosya)...' : 'Temel veritabanı yedeği indiriliyor...', type: 'success' });
                   } catch (err: any) {
                     setMessage({ text: 'İndirme hatası: ' + err.message, type: 'error' });
                   } finally {
                     setSaving(false);
-                    setTimeout(() => setMessage(null), 3000);
+                    setTimeout(() => setMessage(null), 4000);
                   }
                 }}
                 disabled={saving || syncing}
@@ -550,7 +565,7 @@ export default function DatabaseControlModal({ isOpen, onClose, settings, setSet
                 <div>
                   <div className="font-bold text-xs">Yedeği İndir (Export)</div>
                   <div className="text-[11px] text-neutral-500 dark:text-indigo-400/70 mt-0.5">
-                    Aktif veritabanındaki verileri JSON olarak bilgisayarınıza kaydeder.
+                    {includeHistory ? 'Tüm veriler ve tarihsel barlar (+500MB JSON)' : 'Ayarlar, varlıklar, fonlar ve güncel fiyatlar (~15MB JSON)'}
                   </div>
                 </div>
               </button>
@@ -580,17 +595,31 @@ export default function DatabaseControlModal({ isOpen, onClose, settings, setSet
                       try {
                         JSON.parse(text);
                       } catch {
-                        throw new Error('Seçilen yedek dosyası eksik veya indirilirken yarıda kesintiye uğramış (Geçersiz/Eksik JSON). Lütfen yedeği tekrar indirin veya yukarıdaki "Cloud ➔ Local Senkronizasyonu" butonunu kullanın.');
+                        throw new Error('Seçilen yedek dosyası eksik veya indirme esnasında yarıda kesilmiş (Geçersiz JSON). Çözüm: "Tarihsel fiyat barlarını da aktar" kutusunu KALDIRIP tekrar indiriniz veya ekranın üstündeki "Cloud ➔ Local Senkronizasyonu" butonunu kullanınız.');
                       }
 
-                      // Send raw text body to avoid doubling memory usage with JSON.stringify
+                      // Compress payload with GZIP on client side if large to prevent HTTP payload timeouts
+                      let bodyData: any = text;
+                      let isGzip = false;
+                      if (typeof CompressionStream !== 'undefined' && text.length > 300000) {
+                        try {
+                          const blob = new Blob([text], { type: 'application/json' });
+                          const compressedStream = blob.stream().pipeThrough(new CompressionStream('gzip'));
+                          bodyData = await new Response(compressedStream).arrayBuffer();
+                          isGzip = true;
+                        } catch {
+                          bodyData = text;
+                        }
+                      }
+
                       const res = await fetch('/api/settings/db/import', {
                         method: 'POST',
                         headers: {
                           ...(await getHeaders()),
-                          'Content-Type': 'application/json'
+                          'Content-Type': 'application/json',
+                          ...(isGzip ? { 'Content-Encoding': 'gzip' } : {})
                         },
-                        body: text
+                        body: bodyData
                       });
 
                       const resText = await res.text();

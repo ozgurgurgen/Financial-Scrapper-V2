@@ -1111,10 +1111,29 @@ async function startServer() {
       console.log('Export requested');
       const includeLargeHistory = req.query.includeLargeHistory === 'true';
       
+      const acceptEncoding = (req.headers['accept-encoding'] || '') as string;
+      const useGzip = acceptEncoding.includes('gzip');
+      
       res.setHeader('Content-Type', 'application/json');
       res.setHeader('Content-Disposition', 'attachment; filename="database_backup.json"');
+      
+      let gzipStream: any = null;
+      if (useGzip) {
+        const zlib = await import('zlib');
+        res.setHeader('Content-Encoding', 'gzip');
+        gzipStream = zlib.createGzip({ level: 6 });
+        gzipStream.pipe(res);
+      }
       res.flushHeaders();
-      res.write('{');
+
+      const destStream = gzipStream || res;
+      const writeChunk = async (text: string) => {
+        if (!destStream.write(text)) {
+          await new Promise(resolve => destStream.once('drain', resolve));
+        }
+      };
+      
+      await writeChunk('{');
       
       const { schema, ORDERED_TABLE_KEYS, MASSIVE_HISTORY_TABLES, defaultDb } = await import('./src/db/index.js');
       
@@ -1137,11 +1156,11 @@ async function startServer() {
         }
 
         if (totalCount > 0) {
-          if (!firstTable) res.write(',');
+          if (!firstTable) await writeChunk(',');
           firstTable = false;
           
           const tableName = table[Symbol.for('drizzle:Name')];
-          res.write(`"${tableName}":[`);
+          await writeChunk(`"${tableName}":[`);
           
           const limit = 5000;
           let exportedCount = 0;
@@ -1176,22 +1195,29 @@ async function startServer() {
             const innerStr = chunkStr.substring(1, chunkStr.length - 1);
             
             if (innerStr.length > 0) {
-              if (!firstRow) res.write(',');
-              res.write(innerStr);
+              if (!firstRow) await writeChunk(',');
+              await writeChunk(innerStr);
               firstRow = false;
             }
             
             exportedCount += chunk.length;
           }
           
-          res.write(']');
+          await writeChunk(']');
           console.log(`Table ${tableKey} exported: ${totalCount} records`);
         }
       }
       
-      res.write('}');
-      res.end();
-      console.log('Export response sent entirely.');
+      await writeChunk('}');
+      if (gzipStream) {
+        await new Promise<void>((resolve) => {
+          gzipStream.on('finish', resolve);
+          gzipStream.end();
+        });
+      } else {
+        res.end();
+      }
+      console.log('Export response sent entirely with GZIP stream.');
     } catch (error: any) {
       console.error('Export error:', error);
       if (!res.headersSent) {
@@ -1207,9 +1233,16 @@ async function startServer() {
       req.socket.setTimeout(0);
       res.setTimeout(0);
       let data = req.body;
-      if (typeof data === 'string') {
+      
+      // If client sent compressed buffer or raw gzip body, decompress it
+      if (Buffer.isBuffer(data) || req.headers['content-encoding'] === 'gzip') {
+        const zlib = await import('zlib');
+        const decompressed = zlib.gunzipSync(Buffer.isBuffer(data) ? data : req.body);
+        data = JSON.parse(decompressed.toString('utf-8'));
+      } else if (typeof data === 'string') {
         data = JSON.parse(data);
       }
+      
       if (!data || typeof data !== 'object') {
         return res.status(400).json({ error: 'Geçersiz veri formatı. JSON nesnesi bekleniyor.' });
       }
