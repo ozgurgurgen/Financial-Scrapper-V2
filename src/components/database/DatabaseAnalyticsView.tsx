@@ -77,6 +77,12 @@ export const DatabaseAnalyticsView: React.FC<{ isDark?: boolean }> = ({ isDark =
   const [copiedType, setCopiedType] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'OVERVIEW' | 'TABLES' | 'ACTIVITY' | 'EXPORTS'>('OVERVIEW');
 
+  // Quota configuration state
+  const [showQuotaModal, setShowQuotaModal] = useState(false);
+  const [quotaInputValue, setQuotaInputValue] = useState<number>(1024);
+  const [updatingQuota, setUpdatingQuota] = useState(false);
+  const [quotaStatusMsg, setQuotaStatusMsg] = useState<string | null>(null);
+
   const fetchMetrics = async () => {
     setLoading(true);
     setError(null);
@@ -85,6 +91,9 @@ export const DatabaseAnalyticsView: React.FC<{ isDark?: boolean }> = ({ isDark =
       if (res.ok) {
         const json = await res.json();
         setData(json);
+        if (json.summary?.storageQuotaMb) {
+          setQuotaInputValue(json.summary.storageQuotaMb);
+        }
       } else {
         throw new Error(`Sunucu yanıt vermedi: HTTP ${res.status}`);
       }
@@ -92,6 +101,33 @@ export const DatabaseAnalyticsView: React.FC<{ isDark?: boolean }> = ({ isDark =
       setError(err.message || 'Veritabanı metrikleri alınamadı.');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleUpdateQuota = async (newQuotaMb: number) => {
+    setUpdatingQuota(true);
+    setQuotaStatusMsg(null);
+    try {
+      const res = await apiFetch('/api/db/quota', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ storageQuotaMb: newQuotaMb })
+      });
+      const json = await res.json();
+      if (res.ok) {
+        setQuotaStatusMsg('✓ Kota başarıyla güncellendi.');
+        await fetchMetrics();
+        setTimeout(() => {
+          setShowQuotaModal(false);
+          setQuotaStatusMsg(null);
+        }, 1200);
+      } else {
+        setQuotaStatusMsg(`Hata: ${json.error || 'Kota güncellenemedi.'}`);
+      }
+    } catch (err: any) {
+      setQuotaStatusMsg(`Hata: ${err.message || 'İstek başarısız oldu.'}`);
+    } finally {
+      setUpdatingQuota(false);
     }
   };
 
@@ -268,31 +304,54 @@ Veritabanı Motoru: ${data.summary.databaseEngine}`;
         {/* Database Size */}
         <div className="p-4 rounded-2xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 shadow-xs">
           <div className="flex items-center justify-between text-neutral-400 text-xs mb-1 font-medium">
-            <span>Disk Boyutu</span>
+            <span>Gerçek Disk Boyutu</span>
             <HardDrive size={14} className="text-purple-500" />
           </div>
           <div className="text-xl lg:text-2xl font-black text-purple-600 dark:text-purple-400 font-mono">
             {data.summary.totalSizeFormatted}
           </div>
-          <div className="text-[10px] text-neutral-400 font-mono mt-1">
-            Kota: {data.summary.storageQuotaMb} MB
+          <div className="text-[10px] text-purple-500/90 font-mono mt-1 truncate" title="pg_database_size()">
+            SQL Relation Boyutu
           </div>
         </div>
 
         {/* Storage Quota Progress */}
-        <div className="p-4 rounded-2xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 shadow-xs">
+        <div className="p-4 rounded-2xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 shadow-xs relative group">
           <div className="flex items-center justify-between text-neutral-400 text-xs mb-1 font-medium">
             <span>Kapasite Doluluğu</span>
-            <Server size={14} className="text-cyan-500" />
+            <button 
+              onClick={() => setShowQuotaModal(true)}
+              className="text-[10px] text-purple-600 dark:text-purple-400 hover:underline font-bold flex items-center gap-0.5 cursor-pointer"
+              title="Kotayı Değiştir"
+            >
+              <Server size={13} className="text-cyan-500" />
+            </button>
           </div>
-          <div className="text-xl lg:text-2xl font-black text-neutral-900 dark:text-white font-mono">
-            %{data.summary.storageUsagePct}
+          <div className="flex items-baseline justify-between">
+            <div className="text-xl lg:text-2xl font-black text-neutral-900 dark:text-white font-mono">
+              %{data.summary.storageUsagePct}
+            </div>
+            <button 
+              onClick={() => setShowQuotaModal(true)}
+              className="text-[10px] text-purple-600 dark:text-purple-400 font-bold hover:underline cursor-pointer"
+            >
+              Düzenle
+            </button>
           </div>
-          <div className="w-full bg-neutral-100 dark:bg-neutral-800 h-1.5 rounded-full mt-2 overflow-hidden">
+          <div className="w-full bg-neutral-100 dark:bg-neutral-800 h-1.5 rounded-full mt-1.5 overflow-hidden">
             <div 
-              className="bg-gradient-to-r from-cyan-500 to-purple-500 h-full rounded-full transition-all duration-500"
+              className={`h-full rounded-full transition-all duration-500 ${
+                data.summary.storageUsagePct > 90 
+                  ? 'bg-red-500' 
+                  : data.summary.storageUsagePct > 70 
+                    ? 'bg-amber-500' 
+                    : 'bg-gradient-to-r from-cyan-500 to-purple-500'
+              }`}
               style={{ width: `${Math.max(4, data.summary.storageUsagePct)}%` }}
             />
+          </div>
+          <div className="text-[10px] text-neutral-400 font-mono mt-1 truncate" title={data.summary.quotaSource}>
+            Kota: {data.summary.storageQuotaMb >= 1024 ? `${(data.summary.storageQuotaMb / 1024).toFixed(1)} GB` : `${data.summary.storageQuotaMb} MB`}
           </div>
         </div>
 
@@ -320,21 +379,21 @@ Veritabanı Motoru: ${data.summary.databaseEngine}`;
             {data.summary.avgWriteLatencyMs} ms
           </div>
           <div className="text-[10px] text-neutral-400 font-mono mt-1">
-            {data.summary.activeConnections} Aktif Havuz Client
+            {data.summary.activeConnections} Aktif Bağlantı
           </div>
         </div>
 
         {/* Database Engine */}
         <div className="p-4 rounded-2xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 shadow-xs">
           <div className="flex items-center justify-between text-neutral-400 text-xs mb-1 font-medium">
-            <span>Veritabanı</span>
+            <span>Veritabanı Motoru</span>
             <Cpu size={14} className="text-indigo-500" />
           </div>
-          <div className="text-sm font-bold text-neutral-900 dark:text-white font-mono truncate mt-1">
-            PG 16 CLUSTER
+          <div className="text-xs font-bold text-neutral-900 dark:text-white font-mono truncate mt-1" title={data.summary.databaseEngine}>
+            {data.summary.databaseEngine}
           </div>
           <div className="text-[10px] text-neutral-400 font-mono mt-1">
-            Yedek: {data.summary.lastBackupAt}
+            Canlı PostgreSQL Cluster
           </div>
         </div>
       </div>
@@ -798,6 +857,114 @@ Veritabanı Motoru: ${data.summary.databaseEngine}`;
               >
                 {copiedType === 'summary' ? <Check size={14} className="text-emerald-500" /> : <Copy size={14} />}
                 <span>{copiedType === 'summary' ? 'Kopyalandı!' : 'Özeti Panoya Kopyala'}</span>
+              </button>
+            </div>
+
+          </div>
+        </div>
+      )}
+
+      {/* ─── 7. DEPOLAMA KOTASI YAPILANDIRMA MODALI ─── */}
+      {showQuotaModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-xs animate-fadeIn">
+          <div className="bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-2xl max-w-lg w-full p-6 shadow-2xl space-y-5 relative">
+            
+            <div className="flex items-center justify-between border-b border-neutral-200 dark:border-neutral-800 pb-3">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 rounded-xl bg-purple-500/10 text-purple-600 dark:text-purple-400">
+                  <Server size={20} />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-neutral-900 dark:text-white">Veritabanı Depolama Kotası Ayarı</h3>
+                  <p className="text-xs text-neutral-500">Neon, Cloud SQL veya yerel diskinizin gerçek limitini belirleyin.</p>
+                </div>
+              </div>
+              <button 
+                onClick={() => setShowQuotaModal(false)}
+                className="p-1.5 rounded-lg text-neutral-400 hover:text-neutral-900 dark:hover:text-white hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              <div className="p-3.5 rounded-xl bg-neutral-50 dark:bg-neutral-800/60 border border-neutral-200 dark:border-neutral-700/60 text-xs space-y-1">
+                <div className="text-neutral-500 font-medium">Mevcut Veritabanı Tüketimi:</div>
+                <div className="text-sm font-black text-purple-600 dark:text-purple-400 font-mono flex items-center justify-between">
+                  <span>{data?.summary.totalSizeFormatted}</span>
+                  <span className="text-xs text-neutral-400 font-normal">Kaynak: {data?.summary.quotaSource}</span>
+                </div>
+              </div>
+
+              {/* Presets */}
+              <div className="space-y-2">
+                <label className="text-xs font-bold text-neutral-700 dark:text-neutral-300">Hazır Paket / Limit Seçin:</label>
+                <div className="grid grid-cols-3 gap-2 text-xs">
+                  {[
+                    { label: '512 MB', mb: 512, sub: 'Neon Free' },
+                    { label: '1.024 MB (1 GB)', mb: 1024, sub: 'Standart' },
+                    { label: '2.048 MB (2 GB)', mb: 2048, sub: 'Orta Seviye' },
+                    { label: '5.120 MB (5 GB)', mb: 5120, sub: 'Gelişmiş' },
+                    { label: '10.240 MB (10 GB)', mb: 10240, sub: 'Veri Ambarı' },
+                    { label: '51.200 MB (50 GB)', mb: 51200, sub: 'Sistem Diski' },
+                  ].map((preset) => (
+                    <button
+                      key={preset.mb}
+                      onClick={() => setQuotaInputValue(preset.mb)}
+                      className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer ${
+                        quotaInputValue === preset.mb
+                          ? 'border-purple-500 bg-purple-500/10 text-purple-600 dark:text-purple-300 font-bold ring-2 ring-purple-500/30'
+                          : 'border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800/40 text-neutral-700 dark:text-neutral-300 hover:border-neutral-400'
+                      }`}
+                    >
+                      <div className="font-mono font-bold text-xs">{preset.label}</div>
+                      <div className="text-[10px] text-neutral-400">{preset.sub}</div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Custom Input */}
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-neutral-700 dark:text-neutral-300"> Veya Özel Kota Limiti Girin (MB):</label>
+                <div className="relative">
+                  <input
+                    type="number"
+                    min="50"
+                    max="1000000"
+                    value={quotaInputValue}
+                    onChange={(e) => setQuotaInputValue(Math.max(1, parseInt(e.target.value) || 0))}
+                    className="w-full px-3.5 py-2 text-xs font-mono rounded-xl bg-neutral-100 dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 text-neutral-900 dark:text-white focus:outline-hidden focus:ring-2 focus:ring-purple-500"
+                  />
+                  <span className="absolute right-3 top-2 text-xs text-neutral-400 font-mono">MB</span>
+                </div>
+              </div>
+
+              {quotaStatusMsg && (
+                <div className={`p-3 rounded-xl text-xs font-mono font-semibold ${
+                  quotaStatusMsg.startsWith('✓') 
+                    ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20' 
+                    : 'bg-red-500/10 text-red-500 border border-red-500/20'
+                }`}>
+                  {quotaStatusMsg}
+                </div>
+              )}
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-neutral-200 dark:border-neutral-800">
+              <button
+                onClick={() => setShowQuotaModal(false)}
+                className="px-4 py-2 rounded-xl text-xs font-semibold text-neutral-600 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors cursor-pointer"
+              >
+                İptal
+              </button>
+              <button
+                onClick={() => handleUpdateQuota(quotaInputValue)}
+                disabled={updatingQuota}
+                className="px-4 py-2 bg-purple-600 hover:bg-purple-500 text-white rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer disabled:opacity-50 flex items-center gap-1.5"
+              >
+                {updatingQuota && <RefreshCw size={12} className="animate-spin" />}
+                <span>Kaydet &amp; Uygula</span>
               </button>
             </div>
 

@@ -1248,12 +1248,13 @@ async function startServer() {
 
   app.post('/api/settings/db/import-session', optionalAuth, async (req: AuthRequest, res) => {
     try {
+      const { overwrite = false } = req.body || {};
       const { PassThrough } = await import('stream');
       const sessionId = 'session_' + Math.random().toString(36).substring(2, 11) + '_' + Date.now();
       const stream = new PassThrough();
 
       const { importDatabaseFromStream } = await import('./src/db/index.js');
-      const importPromise = importDatabaseFromStream(stream);
+      const importPromise = importDatabaseFromStream(stream, { overwrite: !!overwrite });
 
       activeImportSessions.set(sessionId, {
         id: sessionId,
@@ -1262,7 +1263,7 @@ async function startServer() {
         createdAt: Date.now()
       });
 
-      res.json({ success: true, sessionId });
+      res.json({ success: true, sessionId, mode: overwrite ? 'overwrite' : 'append' });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
@@ -1324,22 +1325,23 @@ async function startServer() {
       req.socket.setTimeout(0);
       res.setTimeout(0);
       
+      const overwrite = req.body?.overwrite === true || req.query.overwrite === 'true';
       const { importDatabaseFromStream, importDatabaseFromJson } = await import('./src/db/index.js');
       let result: any;
 
-      if (req.body && typeof req.body === 'object' && Object.keys(req.body).length > 0 && !Buffer.isBuffer(req.body)) {
+      if (req.body && typeof req.body === 'object' && Object.keys(req.body).length > 0 && !Buffer.isBuffer(req.body) && !('overwrite' in req.body && Object.keys(req.body).length === 1)) {
         // Parsed body (small JSON object)
-        result = await importDatabaseFromJson(req.body);
+        result = await importDatabaseFromJson(req.body, { overwrite });
       } else if (typeof req.body === 'string' && req.body.length > 0) {
         try {
           const parsed = JSON.parse(req.body);
-          result = await importDatabaseFromJson(parsed);
+          result = await importDatabaseFromJson(parsed, { overwrite });
         } catch {
-          result = await importDatabaseFromStream(req);
+          result = await importDatabaseFromStream(req, { overwrite });
         }
       } else {
         // Stream directly from req stream for unlimited file size (e.g. 1GB / 100GB / GZIP)
-        result = await importDatabaseFromStream(req);
+        result = await importDatabaseFromStream(req, { overwrite });
       }
 
       res.json({ success: true, message: 'Veri içe aktarma tamamlandı.', ...result });
@@ -1406,6 +1408,31 @@ async function startServer() {
     try {
       const metrics = await databaseAnalyticsService.getDatabaseMetrics();
       res.json(metrics);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Depolama Kotasını Güncelleme
+  app.post('/api/db/quota', optionalAuth, async (req: AuthRequest, res) => {
+    try {
+      const { storageQuotaMb } = req.body;
+      const quotaNum = Number(storageQuotaMb);
+      if (!quotaNum || quotaNum <= 0) {
+        return res.status(400).json({ error: 'Gecerli bir depolama kotasi (MB) girilmelidir.' });
+      }
+
+      const { settings } = await import('./src/db/schema.ts');
+      const { sql } = await import('drizzle-orm');
+
+      await db.insert(settings)
+        .values({ key: 'db_storage_quota_mb', value: quotaNum.toString(), updatedAt: new Date() })
+        .onConflictDoUpdate({
+          target: settings.key,
+          set: { value: quotaNum.toString(), updatedAt: new Date() }
+        });
+
+      res.json({ success: true, message: `Depolama kotası ${quotaNum} MB olarak güncellendi.` });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }

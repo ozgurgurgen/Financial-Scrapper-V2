@@ -202,7 +202,32 @@ export const exportDatabaseToJson = async (includeLargeHistory = false): Promise
   return exportData;
 };
 
-export const importDatabaseFromJson = async (data: Record<string, any[]>): Promise<SyncResult> => {
+export const truncateAllTables = async () => {
+  console.log('[DB Import] Sıfırdan yazma modu aktif: Tüm mevcut tablolar temizleniyor...');
+  const reverseKeys = [...ORDERED_TABLE_KEYS].reverse();
+  for (const tableKey of reverseKeys) {
+    const table = (schema as any)[tableKey];
+    if (!table) continue;
+    const tableName = table[Symbol.for('drizzle:Name')];
+    if (!tableName) continue;
+    try {
+      await currentPool.query(`TRUNCATE TABLE "${tableName}" RESTART IDENTITY CASCADE;`);
+    } catch (e: any) {
+      try {
+        await currentPool.query(`DELETE FROM "${tableName}";`);
+      } catch (delErr: any) {
+        console.warn(`[DB Truncate] Tablo temizleme uyarısı [${tableName}]:`, delErr.message);
+      }
+    }
+  }
+  console.log('[DB Import] Tüm tablolar sıfırlandı ve hazır duruma getirildi.');
+};
+
+export const importDatabaseFromJson = async (data: Record<string, any[]>, options?: { overwrite?: boolean }): Promise<SyncResult> => {
+  if (options?.overwrite) {
+    await truncateAllTables();
+  }
+
   const tableStats: Record<string, number> = {};
   const errors: string[] = [];
   let totalRows = 0;
@@ -384,7 +409,11 @@ async function* parseStreamingTables(inputStream: Readable) {
   }
 }
 
-export const importDatabaseFromStream = async (reqStream: Readable): Promise<SyncResult> => {
+export const importDatabaseFromStream = async (reqStream: Readable, options?: { overwrite?: boolean }): Promise<SyncResult> => {
+  if (options?.overwrite) {
+    await truncateAllTables();
+  }
+
   const tableStats: Record<string, number> = {};
   const errors: string[] = [];
   let totalRows = 0;

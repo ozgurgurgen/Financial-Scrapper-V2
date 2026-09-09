@@ -1,7 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   Database, X, Cloud, Server, CheckCircle2, XCircle, RefreshCw, 
-  ArrowDown, ArrowUp, ArrowLeftRight, AlertTriangle, ShieldCheck, Layers 
+  ArrowDown, ArrowUp, ArrowLeftRight, AlertTriangle, ShieldCheck, Layers, Activity 
 } from 'lucide-react';
 import { getAuthHeaders } from '../../lib/api';
 
@@ -22,11 +22,48 @@ interface ConfirmDialogState {
   themeColor: 'purple' | 'emerald' | 'blue';
 }
 
+interface ProgressInfo {
+  active: boolean;
+  title: string;
+  subtext?: string;
+  type: 'upload' | 'download' | 'sync';
+  percentage: number;
+  transferredBytes?: number;
+  totalBytes?: number;
+  speedMbSec?: string;
+  elapsedSec: number;
+  etaSec: number | null;
+  chunkInfo?: string;
+}
+
+function formatSeconds(sec: number | null): string {
+  if (sec === null || sec < 0 || !isFinite(sec)) return 'Hesaplanıyor...';
+  if (sec === 0) return 'Tamamlandı';
+  if (sec < 60) return `${sec} sn`;
+  const mins = Math.floor(sec / 60);
+  const remainingSecs = sec % 60;
+  return `${mins} dk ${remainingSecs} sn`;
+}
+
+function formatBytes(bytes?: number): string {
+  if (!bytes || bytes <= 0) return '0 MB';
+  const mb = bytes / (1024 * 1024);
+  if (mb >= 1000) return `${(mb / 1024).toFixed(2)} GB`;
+  return `${mb.toFixed(1)} MB`;
+}
+
 export default function DatabaseControlModal({ isOpen, onClose, settings, setSettings }: DatabaseControlModalProps) {
+  const dbConfig = settings['db_connection_config'] || {};
+  const isCustomCloud = !!dbConfig.isCloud && (!!dbConfig.connectionString || !!dbConfig.host);
+  const isLocalActive = !dbConfig.isCloud && (!!dbConfig.connectionString || !!dbConfig.host);
+  const isDefaultCloud = !isLocalActive && !isCustomCloud;
+
   const [saving, setSaving] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [includeHistory, setIncludeHistory] = useState(false);
   const [autoInitSchema, setAutoInitSchema] = useState(true);
+  const [importMode, setImportMode] = useState<'append' | 'overwrite'>('append');
+  const [pendingOverwriteImport, setPendingOverwriteImport] = useState<File | null>(null);
   const [syncDetails, setSyncDetails] = useState<{ 
     totalRows: number; 
     tableStats: Record<string, number>; 
@@ -36,27 +73,36 @@ export default function DatabaseControlModal({ isOpen, onClose, settings, setSet
   } | null>(null);
   const [message, setMessage] = useState<{ text: string, type: 'success' | 'error' } | null>(null);
   const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState | null>(null);
+  const [progressInfo, setProgressInfo] = useState<ProgressInfo | null>(null);
+  const [selectedTarget, setSelectedTarget] = useState<'cloud' | 'local'>(isLocalActive ? 'local' : 'cloud');
+  const [cloudConnStr, setCloudConnStr] = useState<string>(dbConfig.isCloud ? (dbConfig.connectionString || '') : '');
+
+  useEffect(() => {
+    if (isOpen) {
+      setSelectedTarget(isLocalActive ? 'local' : 'cloud');
+      setCloudConnStr(dbConfig.isCloud ? (dbConfig.connectionString || '') : '');
+    }
+  }, [isOpen, isLocalActive, dbConfig.isCloud, dbConfig.connectionString]);
 
   if (!isOpen) return null;
-
-  const dbConfig = settings['db_connection_config'] || {};
-  const isLocalActive = !!dbConfig.connectionString || !!dbConfig.host;
 
   const getHeaders = async () => {
     return await getAuthHeaders({ 'Content-Type': 'application/json' });
   };
 
-  const handleSaveDbConfig = async () => {
+  const handleSaveDbConfig = async (customConfig?: Record<string, any>) => {
     try {
       setSaving(true);
       setMessage(null);
+      const targetConfig = customConfig || dbConfig;
       const res = await fetch('/api/settings/db/switch', {
         method: 'POST',
         headers: await getHeaders(),
-        body: JSON.stringify(dbConfig)
+        body: JSON.stringify(targetConfig)
       });
       if (res.ok) {
-        setMessage({ text: 'Veritabanı bağlantısı başarıyla güncellendi.', type: 'success' });
+        setSettings(prev => ({ ...prev, db_connection_config: targetConfig }));
+        setMessage({ text: 'Veritabanı bağlantısı başarıyla güncellendi ve aktifleştirildi.', type: 'success' });
       } else {
         setMessage({ text: 'Veritabanı bağlantısı güncellenemedi.', type: 'error' });
       }
@@ -68,14 +114,15 @@ export default function DatabaseControlModal({ isOpen, onClose, settings, setSet
     }
   };
 
-  const handleInitDbSchema = async () => {
+  const handleInitDbSchema = async (customConfig?: Record<string, any>) => {
     try {
       setSaving(true);
       setMessage(null);
+      const targetConfig = customConfig || dbConfig;
       const res = await fetch('/api/settings/db/init', {
         method: 'POST',
         headers: await getHeaders(),
-        body: JSON.stringify(dbConfig)
+        body: JSON.stringify(targetConfig)
       });
       const data = await res.json();
       if (res.ok) {
@@ -150,16 +197,57 @@ export default function DatabaseControlModal({ isOpen, onClose, settings, setSet
     }
   };
 
-  // Execute the confirmed sync action
+  // Execute the confirmed sync action with live progress tracking
   const executeConfirmedSync = async () => {
     if (!confirmDialog) return;
     const { direction } = confirmDialog;
     setConfirmDialog(null);
 
+    const startTime = Date.now();
+    let timerInterval: any = null;
+
     try {
       setSyncing(true);
       setMessage(null);
       setSyncDetails(null);
+
+      const targetTitle = direction === 'cloud_to_local' 
+        ? "Cloud ➔ Local Senkronizasyonu" 
+        : direction === 'local_to_cloud' 
+        ? "Local ➔ Cloud Senkronizasyonu" 
+        : "Çift Yönlü Eşitleme (Two-Way Sync)";
+
+      const estimatedTotalSec = includeHistory ? 45 : 12;
+
+      setProgressInfo({
+        active: true,
+        title: `${targetTitle} (%5)`,
+        subtext: 'Tablolar denetleniyor ve veriler taranıyor...',
+        type: 'sync',
+        percentage: 5,
+        elapsedSec: 0,
+        etaSec: estimatedTotalSec
+      });
+
+      timerInterval = setInterval(() => {
+        const elapsed = Math.round((Date.now() - startTime) / 1000);
+        const remaining = Math.max(1, estimatedTotalSec - elapsed);
+        const simulatedPercent = Math.min(95, Math.round((elapsed / estimatedTotalSec) * 90) + 5);
+
+        setProgressInfo({
+          active: true,
+          title: `${targetTitle} (%${simulatedPercent})`,
+          subtext: elapsed < 5 
+            ? 'Tablo şemaları ve DDL tanımları eşitleniyor...' 
+            : elapsed < 15 
+            ? 'Veriler taranıyor ve satırlar aktarılıyor...' 
+            : 'Kayıtlar yazılıyor ve veritabanı sıraları eşitleniyor...',
+          type: 'sync',
+          percentage: simulatedPercent,
+          elapsedSec: elapsed,
+          etaSec: remaining
+        });
+      }, 1000);
 
       const res = await fetch('/api/settings/db/sync', {
         method: 'POST',
@@ -171,8 +259,22 @@ export default function DatabaseControlModal({ isOpen, onClose, settings, setSet
         })
       });
 
+      if (timerInterval) clearInterval(timerInterval);
+
       const data = await res.json();
+      const elapsedTotal = Math.round((Date.now() - startTime) / 1000);
+
       if (res.ok) {
+        setProgressInfo({
+          active: true,
+          title: `${targetTitle} Tamamlandı! (%100)`,
+          subtext: `Toplam ${data.totalRows?.toLocaleString('tr-TR')} satır başarıyla eşitlendi (${elapsedTotal} sn).`,
+          type: 'sync',
+          percentage: 100,
+          elapsedSec: elapsedTotal,
+          etaSec: 0
+        });
+
         setMessage({ text: data.message, type: 'success' });
         if (data.tableStats) {
           setSyncDetails({
@@ -187,9 +289,265 @@ export default function DatabaseControlModal({ isOpen, onClose, settings, setSet
         setMessage({ text: `Hata: ${data.error || 'Senkronizasyon başarısız oldu.'}`, type: 'error' });
       }
     } catch (e: any) {
+      if (timerInterval) clearInterval(timerInterval);
       setMessage({ text: e.message, type: 'error' });
     } finally {
       setSyncing(false);
+      setTimeout(() => setProgressInfo(null), 4000);
+    }
+  };
+
+  // Export / Download Backup Handler with Live Progress
+  const handleExportBackup = async () => {
+    try {
+      setSaving(true);
+      setMessage(null);
+      const startTime = Date.now();
+
+      const expectedTotal = includeHistory ? 120 * 1024 * 1024 : 15 * 1024 * 1024;
+
+      setProgressInfo({
+        active: true,
+        title: includeHistory ? 'Tüm Veritabanı Yedeği İndiriliyor (%0)' : 'Temel Veritabanı Yedeği İndiriliyor (%0)',
+        subtext: includeHistory ? 'Tarihsel barlar aktarılıyor (GZIP akışı)...' : 'Ayarlar ve güncel fiyatlar indiriliyor...',
+        type: 'download',
+        percentage: 0,
+        transferredBytes: 0,
+        totalBytes: expectedTotal,
+        speedMbSec: '0.0',
+        elapsedSec: 0,
+        etaSec: null
+      });
+
+      const response = await fetch(`/api/settings/db/export?includeLargeHistory=${includeHistory}`);
+      if (!response.ok) throw new Error('İndirme isteği sunucu tarafından reddedildi.');
+
+      const contentLength = Number(response.headers.get('content-length')) || 0;
+      const totalBytes = contentLength || expectedTotal;
+
+      const reader = response.body?.getReader();
+      if (!reader) throw new Error('Tarayıcınız indirme akışını desteklemiyor.');
+
+      const chunks: Uint8Array[] = [];
+      let receivedBytes = 0;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+        receivedBytes += value.length;
+
+        const elapsedSec = (Date.now() - startTime) / 1000;
+        const speedBytesPerSec = elapsedSec > 0 ? receivedBytes / elapsedSec : 0;
+        const speedMbSec = (speedBytesPerSec / (1024 * 1024)).toFixed(2);
+
+        let percentage = 0;
+        let etaSec: number | null = null;
+
+        if (contentLength > 0) {
+          percentage = Math.min(99, Math.round((receivedBytes / contentLength) * 100));
+          if (speedBytesPerSec > 0) {
+            etaSec = Math.max(0, Math.round((contentLength - receivedBytes) / speedBytesPerSec));
+          }
+        } else {
+          percentage = Math.min(99, Math.round((receivedBytes / totalBytes) * 100));
+          if (speedBytesPerSec > 0 && totalBytes > receivedBytes) {
+            etaSec = Math.max(1, Math.round((totalBytes - receivedBytes) / speedBytesPerSec));
+          }
+        }
+
+        setProgressInfo({
+          active: true,
+          title: includeHistory ? `Tüm Veritabanı Yedeği İndiriliyor (%${percentage})` : `Temel Veritabanı Yedeği İndiriliyor (%${percentage})`,
+          subtext: 'Veri akışı devam ediyor...',
+          type: 'download',
+          percentage,
+          transferredBytes: receivedBytes,
+          totalBytes,
+          speedMbSec,
+          elapsedSec: Math.round(elapsedSec),
+          etaSec
+        });
+      }
+
+      const elapsedTotal = Math.round((Date.now() - startTime) / 1000);
+      setProgressInfo({
+        active: true,
+        title: 'İndirme Tamamlandı (%100)',
+        subtext: `Yedek dosyası hazırlandı (${formatBytes(receivedBytes)} - ${elapsedTotal} sn).`,
+        type: 'download',
+        percentage: 100,
+        transferredBytes: receivedBytes,
+        totalBytes: receivedBytes,
+        speedMbSec: ((receivedBytes / (elapsedTotal || 1)) / (1024 * 1024)).toFixed(2),
+        elapsedSec: elapsedTotal,
+        etaSec: 0
+      });
+
+      const blob = new Blob(chunks, { type: 'application/octet-stream' });
+      const downloadUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = downloadUrl;
+      a.download = includeHistory ? 'database_backup_full_history.json.gz' : 'database_backup.json.gz';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(downloadUrl);
+
+      setMessage({ text: `Yedek dosyası indirildi (${formatBytes(receivedBytes)}).`, type: 'success' });
+    } catch (err: any) {
+      setMessage({ text: 'İndirme hatası: ' + err.message, type: 'error' });
+    } finally {
+      setSaving(false);
+      setTimeout(() => setProgressInfo(null), 4000);
+    }
+  };
+
+  // Import / Upload Backup Handler with Chunked Live Progress
+  const handleImportBackup = async (file: File, forceOverwrite?: boolean) => {
+    let sessionId: string | null = null;
+    const startTime = Date.now();
+    const totalBytes = file.size;
+    const isOverwrite = forceOverwrite !== undefined ? forceOverwrite : (importMode === 'overwrite');
+
+    try {
+      setSaving(true);
+      setMessage(null);
+
+      setProgressInfo({
+        active: true,
+        title: isOverwrite ? 'Tablolar Sıfırlanıyor & Oturum Başlatılıyor (%0)...' : 'İçe Aktarım Oturumu Başlatılıyor (%0)...',
+        subtext: `Dosya: ${file.name} (${formatBytes(totalBytes)}) | Mod: ${isOverwrite ? 'Sıfırdan Yaz (Overwrite)' : 'Devamına Ekle (Merge)'}`,
+        type: 'upload',
+        percentage: 0,
+        transferredBytes: 0,
+        totalBytes,
+        speedMbSec: '0.0',
+        elapsedSec: 0,
+        etaSec: null
+      });
+
+      // 1. Start session
+      const sessionRes = await fetch('/api/settings/db/import-session', {
+        method: 'POST',
+        headers: await getHeaders(),
+        body: JSON.stringify({ overwrite: isOverwrite })
+      });
+      const sessionJson = await sessionRes.json();
+      if (!sessionRes.ok || !sessionJson.sessionId) {
+        throw new Error(sessionJson.error || 'Oturum başlatılamadı.');
+      }
+      sessionId = sessionJson.sessionId;
+
+      // 2. Upload file in 8 MB chunks
+      const CHUNK_SIZE = 8 * 1024 * 1024;
+      const totalChunks = Math.ceil(totalBytes / CHUNK_SIZE);
+      let transferredBytes = 0;
+
+      for (let i = 0; i < totalChunks; i++) {
+        const start = i * CHUNK_SIZE;
+        const end = Math.min(start + CHUNK_SIZE, totalBytes);
+        const chunkBlob = file.slice(start, end);
+
+        const chunkRes = await fetch(`/api/settings/db/import-chunk?sessionId=${encodeURIComponent(sessionId!)}`, {
+          method: 'POST',
+          headers: {
+            ...(await getHeaders()),
+            'x-session-id': sessionId!,
+            'Content-Type': 'application/octet-stream'
+          },
+          body: chunkBlob
+        });
+
+        if (!chunkRes.ok) {
+          const errJson = await chunkRes.json().catch(() => ({}));
+          throw new Error(errJson.error || `Parça ${i + 1} aktarılırken sunucu yanıt vermedi.`);
+        }
+
+        transferredBytes += chunkBlob.size;
+        const elapsedSec = (Date.now() - startTime) / 1000;
+        const speedBytesPerSec = elapsedSec > 0 ? transferredBytes / elapsedSec : 0;
+        const speedMbSec = (speedBytesPerSec / (1024 * 1024)).toFixed(2);
+        const remainingBytes = totalBytes - transferredBytes;
+        const etaSec = speedBytesPerSec > 0 ? Math.max(0, Math.round(remainingBytes / speedBytesPerSec)) : 0;
+        const percentage = Math.min(95, Math.round((transferredBytes / totalBytes) * 95));
+
+        setProgressInfo({
+          active: true,
+          title: `Yedek Dosyası Yükleniyor (%${percentage})`,
+          subtext: `Parça ${i + 1} / ${totalChunks} (${formatBytes(transferredBytes)} / ${formatBytes(totalBytes)})`,
+          type: 'upload',
+          percentage,
+          transferredBytes,
+          totalBytes,
+          speedMbSec,
+          elapsedSec: Math.round(elapsedSec),
+          etaSec,
+          chunkInfo: `Parça ${i + 1} / ${totalChunks}`
+        });
+      }
+
+      // 3. Finish session and apply inserts
+      setProgressInfo({
+        active: true,
+        title: 'Veriler Veritabanına İşleniyor (%98)...',
+        subtext: 'Tablolar taranıyor ve kayıtlar yazılıyor...',
+        type: 'upload',
+        percentage: 98,
+        transferredBytes: totalBytes,
+        totalBytes,
+        speedMbSec: ((totalBytes / (((Date.now() - startTime) / 1000) || 1)) / (1024 * 1024)).toFixed(2),
+        elapsedSec: Math.round((Date.now() - startTime) / 1000),
+        etaSec: 2
+      });
+
+      const finishRes = await fetch(`/api/settings/db/import-finish?sessionId=${encodeURIComponent(sessionId!)}`, {
+        method: 'POST',
+        headers: {
+          ...(await getHeaders()),
+          'x-session-id': sessionId!
+        }
+      });
+
+      const resText = await finishRes.text();
+      let json: any;
+      try {
+        json = JSON.parse(resText);
+      } catch {
+        throw new Error(`Sunucu yanıt veremedi (HTTP ${finishRes.status}).`);
+      }
+
+      if (finishRes.ok) {
+        const totalElapsed = Math.round((Date.now() - startTime) / 1000);
+        setProgressInfo({
+          active: true,
+          title: 'İçe Aktarım Tamamlandı! (%100)',
+          subtext: `Toplam ${json.totalRows?.toLocaleString('tr-TR')} satır veritabanına yazıldı. (${totalElapsed} sn)`,
+          type: 'upload',
+          percentage: 100,
+          transferredBytes: totalBytes,
+          totalBytes,
+          speedMbSec: ((totalBytes / (totalElapsed || 1)) / (1024 * 1024)).toFixed(2),
+          elapsedSec: totalElapsed,
+          etaSec: 0
+        });
+
+        setMessage({ text: `İçe aktarım tamamlandı! Toplam ${json.totalRows?.toLocaleString('tr-TR')} satır yüklendi.`, type: 'success' });
+        setSyncDetails(json);
+      } else {
+        setMessage({ text: `Hata: ${json.error || 'İçe aktarım başarısız oldu.'}`, type: 'error' });
+      }
+    } catch (err: any) {
+      if (sessionId) {
+        fetch(`/api/settings/db/import-cancel?sessionId=${encodeURIComponent(sessionId)}`, {
+          method: 'POST',
+          headers: { ...(await getHeaders()), 'x-session-id': sessionId }
+        }).catch(() => {});
+      }
+      setMessage({ text: 'İçe aktarım hatası: ' + err.message, type: 'error' });
+    } finally {
+      setSaving(false);
+      setTimeout(() => setProgressInfo(null), 4000);
     }
   };
 
@@ -253,14 +611,70 @@ export default function DatabaseControlModal({ isOpen, onClose, settings, setSet
             </div>
           )}
 
-          {/* Sync In Progress Banner */}
-          {syncing && (
-            <div className="p-4 rounded-xl bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800 flex items-center gap-3">
-              <RefreshCw size={20} className="animate-spin text-blue-600 dark:text-blue-400 shrink-0" />
-              <div>
-                <div className="text-sm font-bold text-blue-900 dark:text-blue-200">Veritabanı Senkronizasyonu Devam Ediyor...</div>
-                <div className="text-xs text-blue-700 dark:text-blue-400 mt-0.5">
-                  Tablolar kontrol ediliyor ve satırlar güvenle kopyalanıyor. Lütfen pencereyi kapatmayınız.
+          {/* ========================================================================= */}
+          {/* LIVE PROGRESS BAR BANNER WITH SPEED, PERCENTAGE & CALCULATED ETA           */}
+          {/* ========================================================================= */}
+          {progressInfo && progressInfo.active && (
+            <div className="p-4 rounded-xl bg-gradient-to-br from-indigo-900/90 via-purple-900/90 to-slate-900 text-white shadow-xl border border-indigo-700/60 space-y-3.5 animate-in fade-in zoom-in-95 duration-200">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="p-2.5 rounded-xl bg-indigo-500/30 text-indigo-300 ring-1 ring-indigo-400/30">
+                    <RefreshCw size={20} className="animate-spin" />
+                  </div>
+                  <div>
+                    <div className="text-sm font-bold tracking-wide text-white">{progressInfo.title}</div>
+                    {progressInfo.subtext && (
+                      <div className="text-xs text-indigo-200/80 mt-0.5">{progressInfo.subtext}</div>
+                    )}
+                  </div>
+                </div>
+                <div className="text-right">
+                  <span className="text-2xl font-extrabold text-emerald-400 font-mono tracking-tight">
+                    %{progressInfo.percentage}
+                  </span>
+                </div>
+              </div>
+
+              {/* Progress Bar Track */}
+              <div className="w-full bg-indigo-950/80 rounded-full h-3.5 overflow-hidden p-0.5 border border-indigo-700/50 relative">
+                <div 
+                  className="bg-gradient-to-r from-indigo-500 via-purple-400 to-emerald-400 h-full rounded-full transition-all duration-300 relative overflow-hidden shadow-inner"
+                  style={{ width: `${Math.min(100, Math.max(3, progressInfo.percentage))}%` }}
+                >
+                  <div className="absolute inset-0 bg-white/20 animate-pulse" />
+                </div>
+              </div>
+
+              {/* Stats Grid: Transferred MB | Speed MB/s | Elapsed Time | ETA Remaining */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+                <div className="p-2.5 rounded-lg bg-indigo-950/60 border border-indigo-800/50">
+                  <span className="text-[10px] text-indigo-300 uppercase block font-semibold tracking-wider">Aktarılan Veri</span>
+                  <span className="font-bold text-white font-mono text-xs mt-0.5 block truncate">
+                    {progressInfo.totalBytes 
+                      ? `${formatBytes(progressInfo.transferredBytes || 0)} / ${formatBytes(progressInfo.totalBytes)}` 
+                      : formatBytes(progressInfo.transferredBytes || 0)}
+                  </span>
+                </div>
+
+                <div className="p-2.5 rounded-lg bg-indigo-950/60 border border-indigo-800/50">
+                  <span className="text-[10px] text-indigo-300 uppercase block font-semibold tracking-wider">Aktarım Hızı</span>
+                  <span className="font-bold text-emerald-300 font-mono text-xs mt-0.5 block">
+                    {progressInfo.speedMbSec ? `${progressInfo.speedMbSec} MB/s` : 'Aktif'}
+                  </span>
+                </div>
+
+                <div className="p-2.5 rounded-lg bg-indigo-950/60 border border-indigo-800/50">
+                  <span className="text-[10px] text-indigo-300 uppercase block font-semibold tracking-wider">Geçen Süre</span>
+                  <span className="font-bold text-white font-mono text-xs mt-0.5 block">
+                    {formatSeconds(progressInfo.elapsedSec)}
+                  </span>
+                </div>
+
+                <div className="p-2.5 rounded-lg bg-indigo-950/60 border border-indigo-800/50">
+                  <span className="text-[10px] text-indigo-300 uppercase block font-semibold tracking-wider">Kalan Tahmini Süre</span>
+                  <span className="font-bold text-amber-300 font-mono text-xs mt-0.5 block">
+                    {formatSeconds(progressInfo.etaSec)}
+                  </span>
                 </div>
               </div>
             </div>
@@ -274,71 +688,187 @@ export default function DatabaseControlModal({ isOpen, onClose, settings, setSet
             <div className="grid grid-cols-2 gap-4">
               <button
                 type="button"
-                onClick={() => toggleTarget('cloud')}
+                onClick={() => setSelectedTarget('cloud')}
                 className={`p-4 rounded-xl border text-left transition-all flex items-start gap-3.5 ${
-                  !isLocalActive 
+                  selectedTarget === 'cloud' 
                     ? 'bg-blue-50/80 border-blue-300 dark:bg-blue-900/20 dark:border-blue-700 shadow-sm ring-2 ring-blue-500/20' 
                     : 'bg-white border-neutral-200 dark:bg-neutral-800 dark:border-neutral-700 opacity-60 hover:opacity-100'
                 }`}
               >
-                <div className={`p-2 rounded-lg shrink-0 ${!isLocalActive ? 'bg-blue-500 text-white' : 'bg-neutral-100 dark:bg-neutral-700 text-neutral-400'}`}>
+                <div className={`p-2 rounded-lg shrink-0 ${selectedTarget === 'cloud' ? 'bg-blue-500 text-white' : 'bg-neutral-100 dark:bg-neutral-700 text-neutral-400'}`}>
                   <Cloud size={20} />
                 </div>
                 <div>
-                  <div className={`font-bold text-sm ${!isLocalActive ? 'text-blue-900 dark:text-blue-300' : 'text-neutral-700 dark:text-neutral-300'}`}>Cloud (Neon SQL)</div>
-                  <div className="text-xs text-neutral-500 mt-1">Varsayılan bulut ortamı. Canlı veriler otomatik buraya yazılır.</div>
+                  <div className={`font-bold text-sm ${selectedTarget === 'cloud' ? 'text-blue-900 dark:text-blue-300' : 'text-neutral-700 dark:text-neutral-300'}`}>Cloud (Bulut SQL)</div>
+                  <div className="text-xs text-neutral-500 mt-1">Sistem dahili Neon DB veya özel bulut veritabanınız (Supabase, RDS, Neon vb.)</div>
                 </div>
               </button>
 
               <button
                 type="button"
-                onClick={() => toggleTarget('local')}
+                onClick={() => setSelectedTarget('local')}
                 className={`p-4 rounded-xl border text-left transition-all flex items-start gap-3.5 ${
-                  isLocalActive 
+                  selectedTarget === 'local' 
                     ? 'bg-emerald-50/80 border-emerald-300 dark:bg-emerald-900/20 dark:border-emerald-700 shadow-sm ring-2 ring-emerald-500/20' 
                     : 'bg-white border-neutral-200 dark:bg-neutral-800 dark:border-neutral-700 opacity-60 hover:opacity-100'
                 }`}
               >
-                <div className={`p-2 rounded-lg shrink-0 ${isLocalActive ? 'bg-emerald-500 text-white' : 'bg-neutral-100 dark:bg-neutral-700 text-neutral-400'}`}>
+                <div className={`p-2 rounded-lg shrink-0 ${selectedTarget === 'local' ? 'bg-emerald-500 text-white' : 'bg-neutral-100 dark:bg-neutral-700 text-neutral-400'}`}>
                   <Server size={20} />
                 </div>
                 <div>
-                  <div className={`font-bold text-sm ${isLocalActive ? 'text-emerald-900 dark:text-emerald-300' : 'text-neutral-700 dark:text-neutral-300'}`}>Local (PostgreSQL)</div>
+                  <div className={`font-bold text-sm ${selectedTarget === 'local' ? 'text-emerald-900 dark:text-emerald-300' : 'text-neutral-700 dark:text-neutral-300'}`}>Local (PostgreSQL)</div>
                   <div className="text-xs text-neutral-500 mt-1">Kendi yerel PostgreSQL sunucunuzu bağlayın veya verileri buraya aktarın.</div>
                 </div>
               </button>
             </div>
           </div>
 
-          {/* Local PostgreSQL Config Form */}
-          {isLocalActive && (
-            <div className="p-5 bg-neutral-50 dark:bg-neutral-800/40 rounded-xl border border-neutral-200 dark:border-neutral-700/80 space-y-4">
+          {/* Cloud Database Config Form */}
+          {selectedTarget === 'cloud' && (
+            <div className="p-5 bg-blue-50/40 dark:bg-blue-950/20 rounded-xl border border-blue-200/80 dark:border-blue-800/60 space-y-4">
+              <div className="flex items-center justify-between border-b border-blue-100 dark:border-blue-900/40 pb-3">
+                <div className="flex items-center gap-2">
+                  <Cloud size={18} className="text-blue-600 dark:text-blue-400" />
+                  <span className="text-sm font-bold text-blue-950 dark:text-blue-200">Bulut Veritabanı (Cloud DB) Bağlantı Ayarları</span>
+                </div>
+                <span className={`text-[11px] font-bold px-2.5 py-0.5 rounded-full ${isCustomCloud ? 'bg-purple-100 text-purple-800 dark:bg-purple-900/40 dark:text-purple-300' : 'bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300'}`}>
+                  {isCustomCloud ? 'Özel Cloud DB Aktif' : 'Dahili Dahili Neon DB Aktif'}
+                </span>
+              </div>
+
               <div>
                 <div className="flex items-center justify-between mb-1.5">
-                  <label className="block text-xs font-bold uppercase tracking-wider text-neutral-600 dark:text-neutral-300">
-                    PostgreSQL Connection String
+                  <label className="block text-xs font-bold uppercase tracking-wider text-neutral-700 dark:text-neutral-300">
+                    Cloud PostgreSQL Connection String (URL)
                   </label>
-                  <span className="text-[11px] text-neutral-400">Şablon Seç:</span>
+                  <span className="text-[11px] text-neutral-400">Özel Bulut Veritabanı Adresi</span>
+                </div>
+                <input 
+                  type="password"
+                  placeholder="postgresql://neondb_owner:pass@ep-xyz.neon.tech/neondb?sslmode=require"
+                  value={cloudConnStr}
+                  onChange={(e) => setCloudConnStr(e.target.value)}
+                  className="w-full bg-white dark:bg-neutral-900 border border-neutral-300 dark:border-neutral-600 rounded-lg px-4 py-2.5 text-sm focus:ring-2 focus:ring-blue-500 outline-none font-mono"
+                />
+                <div className="flex flex-wrap items-center gap-1.5 mt-2 text-[11px]">
+                  <span className="text-neutral-500">Hazır Şablonlar:</span>
+                  <button
+                    type="button"
+                    onClick={() => setCloudConnStr('postgresql://neondb_owner:password@ep-cool-cloud-123456.eu-central-1.aws.neon.tech/neondb?sslmode=require')}
+                    className="px-2 py-0.5 rounded bg-blue-100 dark:bg-blue-900/50 hover:bg-blue-200 text-blue-900 dark:text-blue-300 font-mono"
+                  >
+                    Neon Cloud
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setCloudConnStr('postgresql://postgres:password@db.xyz.supabase.co:5432/postgres')}
+                    className="px-2 py-0.5 rounded bg-emerald-100 dark:bg-emerald-950/60 hover:bg-emerald-200 text-emerald-800 dark:text-emerald-300 font-mono"
+                  >
+                    Supabase
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setCloudConnStr('postgresql://postgres:password@rds-instance.region.rds.amazonaws.com:5432/finance_db')}
+                    className="px-2 py-0.5 rounded bg-amber-100 dark:bg-amber-950/60 hover:bg-amber-200 text-amber-800 dark:text-amber-300 font-mono"
+                  >
+                    AWS RDS / GCP
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (cloudConnStr.trim()) {
+                      handleSaveDbConfig({ connectionString: cloudConnStr.trim(), isCloud: true });
+                    } else {
+                      // Switch to default system cloud
+                      handleSaveDbConfig({});
+                    }
+                  }}
+                  disabled={saving || syncing}
+                  className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-bold transition-colors shadow-sm disabled:opacity-50 flex items-center justify-center gap-1.5"
+                >
+                  <Cloud size={16} />
+                  {saving ? 'Bağlanıyor...' : (cloudConnStr.trim() ? 'Özel Cloud Bağlantısını Uygula' : 'Dahili Neon DB Kullan (Varsayılan)')}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const cfg = cloudConnStr.trim() ? { connectionString: cloudConnStr.trim(), isCloud: true } : {};
+                    handleInitDbSchema(cfg);
+                  }}
+                  disabled={saving || syncing}
+                  className="py-2.5 px-4 bg-white dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-600 hover:bg-neutral-50 dark:hover:bg-neutral-700 text-neutral-700 dark:text-neutral-300 rounded-lg text-sm font-semibold transition-colors disabled:opacity-50 flex items-center gap-1.5"
+                  title="Bulut veritabanında tüm tabloları sıfırdan veya eksik olanları oluşturur."
+                >
+                  <Layers size={16} />
+                  Cloud Şema Oluştur (DDL)
+                </button>
+                {isCustomCloud && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCloudConnStr('');
+                      handleSaveDbConfig({});
+                    }}
+                    disabled={saving || syncing}
+                    className="py-2.5 px-3 bg-neutral-200 dark:bg-neutral-700 hover:bg-neutral-300 dark:hover:bg-neutral-600 text-neutral-800 dark:text-neutral-200 rounded-lg text-xs font-semibold transition-colors"
+                  >
+                    Varsayılana Sıfırla
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Local PostgreSQL Config Form */}
+          {selectedTarget === 'local' && (
+            <div className="p-5 bg-emerald-50/40 dark:bg-emerald-950/20 rounded-xl border border-emerald-200/80 dark:border-emerald-800/60 space-y-4">
+              <div>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="block text-xs font-bold uppercase tracking-wider text-neutral-700 dark:text-neutral-300">
+                    Yerel PostgreSQL Connection String
+                  </label>
+                  <span className="text-[11px] text-neutral-400">Local DB Adresi</span>
                 </div>
                 <input 
                   type="password"
                   placeholder="postgresql://user:password@host:port/dbname?sslmode=require"
-                  value={dbConfig.connectionString || ''}
-                  onChange={(e) => setLocalConfig(e.target.value)}
+                  value={dbConfig.isCloud ? '' : (dbConfig.connectionString || '')}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setSettings(prev => ({
+                      ...prev,
+                      db_connection_config: { connectionString: val, isCloud: false }
+                    }));
+                  }}
                   className="w-full bg-white dark:bg-neutral-900 border border-neutral-300 dark:border-neutral-600 rounded-lg px-4 py-2.5 text-sm focus:ring-2 focus:ring-emerald-500 outline-none font-mono"
                 />
                 <div className="flex flex-wrap items-center gap-1.5 mt-2 text-[11px]">
                   <span className="text-neutral-500">Şablonlar:</span>
                   <button
                     type="button"
-                    onClick={() => setLocalConfig('postgresql://postgres:password@localhost:5432/finance_db')}
+                    onClick={() => {
+                      setSettings(prev => ({
+                        ...prev,
+                        db_connection_config: { connectionString: 'postgresql://postgres:password@localhost:5432/finance_db', isCloud: false }
+                      }));
+                    }}
                     className="px-2 py-0.5 rounded bg-neutral-200 dark:bg-neutral-700 hover:bg-neutral-300 text-neutral-700 dark:text-neutral-300 font-mono"
                   >
                     Local Şablon (5432)
                   </button>
                   <button
                     type="button"
-                    onClick={() => setLocalConfig('postgresql://postgres:password@0.tcp.ngrok.io:12345/finance_db')}
+                    onClick={() => {
+                      setSettings(prev => ({
+                        ...prev,
+                        db_connection_config: { connectionString: 'postgresql://postgres:password@0.tcp.ngrok.io:12345/finance_db', isCloud: false }
+                      }));
+                    }}
                     className="px-2 py-0.5 rounded bg-emerald-100 dark:bg-emerald-950/60 hover:bg-emerald-200 text-emerald-800 dark:text-emerald-300 font-mono"
                   >
                     Ngrok TCP Şablonu
@@ -349,16 +879,16 @@ export default function DatabaseControlModal({ isOpen, onClose, settings, setSet
               <div className="flex gap-2">
                 <button
                   type="button"
-                  onClick={handleSaveDbConfig}
+                  onClick={() => handleSaveDbConfig(dbConfig)}
                   disabled={saving || syncing}
                   className="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm font-bold transition-colors shadow-sm disabled:opacity-50 flex items-center justify-center gap-1.5"
                 >
                   <Server size={16} />
-                  {saving ? 'Bağlanıyor...' : 'Bağlantıyı Uygula & Aktifleştir'}
+                  {saving ? 'Bağlanıyor...' : 'Yerel Bağlantıyı Uygula & Aktifleştir'}
                 </button>
                 <button
                   type="button"
-                  onClick={handleInitDbSchema}
+                  onClick={() => handleInitDbSchema(dbConfig)}
                   disabled={saving || syncing}
                   className="py-2.5 px-4 bg-white dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-600 hover:bg-neutral-50 dark:hover:bg-neutral-700 text-neutral-700 dark:text-neutral-300 rounded-lg text-sm font-semibold transition-colors disabled:opacity-50 flex items-center gap-1.5"
                   title="Yerel veritabanında tüm tabloları sıfırdan oluşturur."
@@ -518,6 +1048,59 @@ export default function DatabaseControlModal({ isOpen, onClose, settings, setSet
               </div>
             </div>
 
+            {/* Import Mode Choice (Sıfırdan Yaz vs Devamına Ekle) */}
+            <div className="space-y-2 pt-1">
+              <label className="block text-xs font-bold text-neutral-700 dark:text-neutral-300">
+                İçe Aktarım Modu (Yedek Yükleme Yöntemi):
+              </label>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => setImportMode('append')}
+                  className={`p-3 rounded-xl border text-left transition-all flex items-start gap-3 ${
+                    importMode === 'append'
+                      ? 'bg-teal-50 border-teal-300 dark:bg-teal-950/40 dark:border-teal-700 shadow-xs ring-2 ring-teal-500/20'
+                      : 'bg-white border-neutral-200 dark:bg-neutral-900 dark:border-neutral-700 opacity-70 hover:opacity-100'
+                  }`}
+                >
+                  <div className={`p-1.5 rounded-lg shrink-0 mt-0.5 ${importMode === 'append' ? 'bg-teal-600 text-white' : 'bg-neutral-100 dark:bg-neutral-800 text-neutral-400'}`}>
+                    <CheckCircle2 size={16} />
+                  </div>
+                  <div>
+                    <div className="font-bold text-xs text-neutral-900 dark:text-white flex items-center gap-1.5">
+                      <span>Devamına Ekle (Merge)</span>
+                      <span className="text-[10px] px-1.5 py-0.2 bg-teal-100 dark:bg-teal-900/60 text-teal-800 dark:text-teal-300 rounded font-normal">Varsayılan</span>
+                    </div>
+                    <div className="text-[11px] text-neutral-500 dark:text-neutral-400 mt-0.5 leading-snug">
+                      Mevcut veriler silinmez. Dosyadaki çakışmayan yeni veriler var olan verilerin devamına eklenir.
+                    </div>
+                  </div>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setImportMode('overwrite')}
+                  className={`p-3 rounded-xl border text-left transition-all flex items-start gap-3 ${
+                    importMode === 'overwrite'
+                      ? 'bg-red-50 border-red-300 dark:bg-red-950/40 dark:border-red-700 shadow-xs ring-2 ring-red-500/20'
+                      : 'bg-white border-neutral-200 dark:bg-neutral-900 dark:border-neutral-700 opacity-70 hover:opacity-100'
+                  }`}
+                >
+                  <div className={`p-1.5 rounded-lg shrink-0 mt-0.5 ${importMode === 'overwrite' ? 'bg-red-600 text-white' : 'bg-neutral-100 dark:bg-neutral-800 text-neutral-400'}`}>
+                    <AlertTriangle size={16} />
+                  </div>
+                  <div>
+                    <div className="font-bold text-xs text-red-900 dark:text-red-300 flex items-center gap-1.5">
+                      <span>Sıfırdan Yaz / Üzerine Yaz (Overwrite)</span>
+                    </div>
+                    <div className="text-[11px] text-neutral-500 dark:text-neutral-400 mt-0.5 leading-snug">
+                      Yükleme öncesinde veritabanındaki <b>tüm mevcut tablolar sıfırlanır (TRUNCATE)</b> ve veriler tamamen dosyadakilerle değiştirilir.
+                    </div>
+                  </div>
+                </button>
+              </div>
+            </div>
+
             {/* Explanatory Tip Box */}
             <div className="p-3 bg-indigo-50/60 dark:bg-indigo-950/30 border border-indigo-200 dark:border-indigo-800/50 rounded-lg text-xs text-indigo-900 dark:text-indigo-300 space-y-1">
               <div className="font-semibold flex items-center gap-1.5">
@@ -536,24 +1119,7 @@ export default function DatabaseControlModal({ isOpen, onClose, settings, setSet
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
               <button
                 type="button"
-                onClick={async () => {
-                  try {
-                    setSaving(true);
-                    const url = `/api/settings/db/export?includeLargeHistory=${includeHistory}`;
-                    const a = document.createElement('a');
-                    a.href = url;
-                    a.download = includeHistory ? 'database_backup_full_history.json' : 'database_backup.json';
-                    document.body.appendChild(a);
-                    a.click();
-                    document.body.removeChild(a);
-                    setMessage({ text: includeHistory ? 'Tüm veritabanı yedeği indiriliyor (büyük dosya)...' : 'Temel veritabanı yedeği indiriliyor...', type: 'success' });
-                  } catch (err: any) {
-                    setMessage({ text: 'İndirme hatası: ' + err.message, type: 'error' });
-                  } finally {
-                    setSaving(false);
-                    setTimeout(() => setMessage(null), 4000);
-                  }
-                }}
+                onClick={handleExportBackup}
                 disabled={saving || syncing}
                 className="p-3.5 rounded-xl border bg-indigo-50/60 hover:bg-indigo-100/70 border-indigo-200 text-indigo-900 dark:bg-indigo-950/20 dark:hover:bg-indigo-950/40 dark:border-indigo-800/60 dark:text-indigo-300 transition-all flex flex-col justify-between"
               >
@@ -574,6 +1140,8 @@ export default function DatabaseControlModal({ isOpen, onClose, settings, setSet
                 className={`p-3.5 rounded-xl border text-left transition-all flex flex-col justify-between cursor-pointer ${
                   saving || syncing 
                     ? 'opacity-50 cursor-not-allowed bg-neutral-100 border-neutral-200 dark:bg-neutral-800 dark:border-neutral-700'
+                    : importMode === 'overwrite'
+                    ? 'bg-red-50/70 hover:bg-red-100/80 border-red-200 text-red-900 dark:bg-red-950/20 dark:hover:bg-red-950/40 dark:border-red-800/60 dark:text-red-300'
                     : 'bg-teal-50/60 hover:bg-teal-100/70 border-teal-200 text-teal-900 dark:bg-teal-950/20 dark:hover:bg-teal-950/40 dark:border-teal-800/60 dark:text-teal-300'
                 }`}
               >
@@ -582,105 +1150,32 @@ export default function DatabaseControlModal({ isOpen, onClose, settings, setSet
                   accept=".json,.gz,.json.gz"
                   className="hidden" 
                   disabled={saving || syncing}
-                  onChange={async (e) => {
+                  onChange={(e) => {
                     const file = e.target.files?.[0];
-                    if (!file) return;
-
-                    let sessionId: string | null = null;
-                    try {
-                      setSaving(true);
-                      setMessage({ text: 'İçe aktarım oturumu başlatılıyor...', type: 'success' });
-
-                      // 1. Start chunked session
-                      const sessionRes = await fetch('/api/settings/db/import-session', {
-                        method: 'POST',
-                        headers: await getHeaders()
-                      });
-                      const sessionJson = await sessionRes.json();
-                      if (!sessionRes.ok || !sessionJson.sessionId) {
-                        throw new Error(sessionJson.error || 'Oturum başlatılamadı.');
-                      }
-                      sessionId = sessionJson.sessionId;
-
-                      // 2. Upload file in 8 MB chunks
-                      const CHUNK_SIZE = 8 * 1024 * 1024;
-                      const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
-
-                      for (let i = 0; i < totalChunks; i++) {
-                        const start = i * CHUNK_SIZE;
-                        const end = Math.min(start + CHUNK_SIZE, file.size);
-                        const chunkBlob = file.slice(start, end);
-
-                        const percent = Math.round(((i + 1) / totalChunks) * 100);
-                        const totalMb = (file.size / (1024 * 1024)).toFixed(1);
-                        setMessage({ 
-                          text: `Yedek aktarılıyor: Parça ${i + 1}/${totalChunks} (%${percent} - Toplam ${totalMb} MB)...`, 
-                          type: 'success' 
-                        });
-
-                        const chunkRes = await fetch(`/api/settings/db/import-chunk?sessionId=${encodeURIComponent(sessionId!)}`, {
-                          method: 'POST',
-                          headers: {
-                            ...(await getHeaders()),
-                            'x-session-id': sessionId!,
-                            'Content-Type': 'application/octet-stream'
-                          },
-                          body: chunkBlob
-                        });
-
-                        if (!chunkRes.ok) {
-                          const errJson = await chunkRes.json().catch(() => ({}));
-                          throw new Error(errJson.error || `Parça ${i + 1} aktarılırken sunucu bağlantısı kesildi.`);
-                        }
-                      }
-
-                      // 3. Finish session and apply inserts
-                      setMessage({ text: 'Veriler veritabanına işleniyor, lütfen bekleyin...', type: 'success' });
-                      const finishRes = await fetch(`/api/settings/db/import-finish?sessionId=${encodeURIComponent(sessionId!)}`, {
-                        method: 'POST',
-                        headers: {
-                          ...(await getHeaders()),
-                          'x-session-id': sessionId!
-                        }
-                      });
-
-                      const resText = await finishRes.text();
-                      let json: any;
-                      try {
-                        json = JSON.parse(resText);
-                      } catch {
-                        throw new Error(`Sunucu yanıt veremedi (HTTP ${finishRes.status}).`);
-                      }
-
-                      if (finishRes.ok) {
-                        setMessage({ text: `İçe aktarım tamamlandı! Toplam ${json.totalRows?.toLocaleString('tr-TR')} satır yüklendi.`, type: 'success' });
-                        setSyncDetails(json);
+                    if (file) {
+                      if (importMode === 'overwrite') {
+                        setPendingOverwriteImport(file);
                       } else {
-                        setMessage({ text: `Hata: ${json.error || 'İçe aktarım başarısız oldu.'}`, type: 'error' });
+                        handleImportBackup(file, false);
                       }
-                    } catch (err: any) {
-                      if (sessionId) {
-                        fetch(`/api/settings/db/import-cancel?sessionId=${encodeURIComponent(sessionId)}`, {
-                          method: 'POST',
-                          headers: { ...(await getHeaders()), 'x-session-id': sessionId }
-                        }).catch(() => {});
-                      }
-                      setMessage({ text: 'İçe aktarım hatası: ' + err.message, type: 'error' });
-                    } finally {
-                      setSaving(false);
                       e.target.value = '';
                     }
                   }}
                 />
                 <div className="flex items-center justify-between mb-2">
-                  <span className="p-1.5 rounded-lg bg-teal-200/60 dark:bg-teal-900/50 text-teal-700 dark:text-teal-300">
+                  <span className={`p-1.5 rounded-lg ${importMode === 'overwrite' ? 'bg-red-200/60 dark:bg-red-900/50 text-red-700 dark:text-red-300' : 'bg-teal-200/60 dark:bg-teal-900/50 text-teal-700 dark:text-teal-300'}`}>
                     <ArrowUp size={16} />
+                  </span>
+                  <span className={`text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded ${importMode === 'overwrite' ? 'bg-red-100 text-red-800 dark:bg-red-900/60 dark:text-red-300' : 'bg-teal-100 text-teal-800 dark:bg-teal-900/60 dark:text-teal-300'}`}>
+                    {importMode === 'overwrite' ? 'Sıfırdan Yazma Modu' : 'Devamına Ekleme Modu'}
                   </span>
                 </div>
                 <div>
                   <div className="font-bold text-xs">Yedek Yükle (Import)</div>
-                  <div className="text-[11px] text-neutral-500 dark:text-teal-400/70 mt-0.5">
-                    Seçtiğiniz JSON dosyasını aktif veritabanına aktarır.
+                  <div className="text-[11px] text-neutral-500 dark:text-neutral-400 mt-0.5">
+                    {importMode === 'overwrite' 
+                      ? '⚠️ Mevcut veriler silinip seçilen dosyadaki veriler baştan yazılır.' 
+                      : 'Seçtiğiniz JSON dosyasındaki verileri aktif veritabanına ekler.'}
                   </div>
                 </div>
               </label>
@@ -810,12 +1305,49 @@ export default function DatabaseControlModal({ isOpen, onClose, settings, setSet
                   className={`flex-1 py-2.5 px-4 rounded-xl text-xs font-bold text-white transition-all shadow-sm ${
                     confirmDialog.themeColor === 'purple'
                       ? 'bg-purple-600 hover:bg-purple-700'
-                      : confirmDialog.themeColor === 'emerald'
-                      ? 'bg-emerald-600 hover:bg-emerald-700'
-                      : 'bg-blue-600 hover:bg-blue-700'
+                      : 'bg-emerald-600 hover:bg-emerald-700'
                   }`}
                 >
                   Evet, Kopyalamayı Başlat
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+        {/* ========================================================================= */}
+        {/* OVERWRITE / WIPE CONFIRMATION MODAL                                        */}
+        {/* ========================================================================= */}
+        {pendingOverwriteImport && (
+          <div className="absolute inset-0 z-50 bg-black/70 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in zoom-in-95 duration-150">
+            <div className="bg-white dark:bg-neutral-900 rounded-2xl border border-red-200 dark:border-red-900/60 shadow-2xl w-full max-w-md p-6 space-y-4">
+              <div className="flex items-center gap-3 text-red-600 dark:text-red-400 font-bold text-base">
+                <AlertTriangle size={24} className="shrink-0" />
+                <span>⚠️ Sıfırdan Yazma (TRUNCATE) Onayı</span>
+              </div>
+              <p className="text-xs text-neutral-600 dark:text-neutral-300 leading-relaxed">
+                <b>'Sıfırdan Yaz (Overwrite)'</b> modunu seçtiniz. Veritabanınızdaki <b>TÜM MEVCUT TABLOLAR VE VERİLER TEMİZLENECEK (SİLİNECEK)</b> ve yüklenen <b>{pendingOverwriteImport.name}</b> dosyasındaki verilerle baştan yazılacaktır.
+              </p>
+              <div className="p-3 bg-red-50 dark:bg-red-950/40 rounded-xl border border-red-200 dark:border-red-900/40 text-[11px] text-red-800 dark:text-red-300 font-semibold">
+                Bu işlem geri alınamaz! Veritabanını sıfırlayıp bu yedekten yüklemek istediğinizden emin misiniz?
+              </div>
+              <div className="flex gap-2.5 justify-end pt-2">
+                <button
+                  type="button"
+                  onClick={() => setPendingOverwriteImport(null)}
+                  className="flex-1 py-2.5 px-4 rounded-xl text-xs font-bold text-neutral-600 dark:text-neutral-400 bg-neutral-100 hover:bg-neutral-200 dark:bg-neutral-800 dark:hover:bg-neutral-700 transition-colors"
+                >
+                  Vazgeç / İptal
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const file = pendingOverwriteImport;
+                    setPendingOverwriteImport(null);
+                    handleImportBackup(file, true);
+                  }}
+                  className="flex-1 py-2.5 px-4 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-bold transition-all shadow-sm"
+                >
+                  Evet, Tüm Verileri Sil ve Yükle
                 </button>
               </div>
             </div>
