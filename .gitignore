@@ -6,3 +6,10 @@ coverage/
 *.log
 .env*
 !.env.example
+*.tar.gz
+cookies.txt
+output.txt
+patch_scheduler.*
+updateSchedulerTab.js
+repo_temp/
+chunks/

@@ -1,4 +1,0 @@
-TEFAS Worker=7344
-KAP Worker=2620
-Market Data Worker=7020
-Admin Dashboard=9316

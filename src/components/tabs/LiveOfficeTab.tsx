@@ -253,6 +253,8 @@ export default function LiveOfficeTab() {
         await fetch('/api/v1/scheduler/trigger/ipo_tracking', { method: 'POST' });
       } else if (dept === 'HABERLER') {
         await fetch('/api/v1/scheduler/trigger/news_tracking', { method: 'POST' });
+      } else if (dept === 'ARSIV') {
+        await fetch('/api/v1/scheduler/trigger/asset_registry_sync', { method: 'POST' });
       } else {
         await fetch('/api/v1/scheduler/trigger/bist_quotes', { method: 'POST' });
       }
@@ -560,7 +562,7 @@ export default function LiveOfficeTab() {
                   </h2>
                 </div>
                 <span className="text-xs text-neutral-400">
-                  6 Aktif Departman
+                  10 Operasyon Masası
                 </span>
               </div>
 

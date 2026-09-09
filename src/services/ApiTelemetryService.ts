@@ -239,6 +239,23 @@ class ApiTelemetryService {
   }
 
   // --- API Keys Management ---
+  public validateApiKey(rawKey: string): ApiKeyRecord | null {
+    if (!rawKey || typeof rawKey !== 'string') return null;
+    let cleanKey = rawKey.trim();
+    if (cleanKey.toLowerCase().startsWith('bearer ')) {
+      cleanKey = cleanKey.substring(7).trim();
+    }
+    if (!cleanKey) return null;
+
+    const found = this.apiKeys.find(k => k.key === cleanKey && k.status === 'ACTIVE');
+    if (found) {
+      found.totalCalls++;
+      found.lastUsedAt = new Date().toISOString();
+      return found;
+    }
+    return null;
+  }
+
   public getApiKeys() {
     return {
       success: true,

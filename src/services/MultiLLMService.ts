@@ -678,6 +678,8 @@ export class MultiLLMService {
       if (provider === '9router' || provider === 'custom') {
         const rawUrl = endpointUrl || (provider === '9router' ? 'http://localhost:2165/v1/chat/completions' : 'http://localhost:4000/v1/chat/completions');
         const modelsUrl = normalizeModelsEndpoint(rawUrl);
+        const isLocalHost = rawUrl.includes('localhost') || rawUrl.includes('127.0.0.1');
+        const timeoutMs = isLocalHost ? 2500 : 8000;
         const headers: Record<string, string> = {};
         if (apiKey && apiKey.trim()) {
           headers['Authorization'] = apiKey.startsWith('Bearer ') ? apiKey.trim() : `Bearer ${apiKey.trim()}`;
@@ -685,11 +687,11 @@ export class MultiLLMService {
 
         let res;
         try {
-          res = await axios.get(modelsUrl, { headers, timeout: 8000 });
+          res = await axios.get(modelsUrl, { headers, timeout: timeoutMs });
         } catch (e1: any) {
           const fallbackUrl = rawUrl.replace(/\/chat\/completions$/, '').replace(/\/v1$/, '') + '/models';
           if (fallbackUrl !== modelsUrl) {
-            res = await axios.get(fallbackUrl, { headers, timeout: 8000 });
+            res = await axios.get(fallbackUrl, { headers, timeout: timeoutMs });
           } else {
             throw e1;
           }
@@ -715,16 +717,18 @@ export class MultiLLMService {
       } else if (provider === 'local') {
         const rawUrl = endpointUrl || 'http://localhost:11434/api/generate';
         const baseUrl = rawUrl.replace(/\/api\/generate$/, '').replace(/\/v1\/chat\/completions$/, '').replace(/\/+$/, '');
+        const isLocalHost = rawUrl.includes('localhost') || rawUrl.includes('127.0.0.1');
+        const timeoutMs = isLocalHost ? 2500 : 8000;
         
         let modelList: string[] = [];
         try {
-          const res = await axios.get(`${baseUrl}/api/tags`, { timeout: 8000 });
+          const res = await axios.get(`${baseUrl}/api/tags`, { timeout: timeoutMs });
           if (Array.isArray(res.data?.models)) {
             modelList = res.data.models.map((m: any) => m.name || m.model).filter(Boolean);
           }
         } catch {
           try {
-            const res2 = await axios.get(`${baseUrl}/v1/models`, { timeout: 8000 });
+            const res2 = await axios.get(`${baseUrl}/v1/models`, { timeout: timeoutMs });
             if (Array.isArray(res2.data?.data)) {
               modelList = res2.data.data.map((m: any) => m.id || m.name).filter(Boolean);
             }
@@ -789,11 +793,16 @@ export class MultiLLMService {
         }
       }
     } catch (err: any) {
-      console.warn(`[MultiLLMService] Live model fetch failed for ${provider}:`, err.message);
+      const isConnError = err.code === 'ECONNREFUSED' || err.message?.includes('ECONNREFUSED') || err.code === 'ENOTFOUND' || err.code === 'ETIMEDOUT';
+      if (!isConnError) {
+        console.warn(`[MultiLLMService] Live model fetch failed for ${provider}:`, err.message);
+      }
       return {
         success: false,
         models: PRESETS[provider] || ['default'],
-        message: `Canlı model listesi alınamadı (${err.message}). Önerilen modeller listelendi.`,
+        message: isConnError 
+          ? `Yerel ${provider} servisine bağlanılamadı (${endpointUrl || 'localhost'}). Önerilen varsayılan modeller yüklendi.`
+          : `Canlı model listesi alırken hata oluştu (${err.message}). Önerilen modeller listelendi.`,
         source: 'preset'
       };
     }

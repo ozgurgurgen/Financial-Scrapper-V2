@@ -488,6 +488,15 @@ class UsUniverseService {
     const startTime = new Date();
     let updatedCount = 0;
 
+    appEventBus.emitOfficeEvent({
+      type: 'US_STOCKS_SYNC_STARTED',
+      actor: 'WALL_STREET_ADAPTER',
+      department: 'AMERIKA',
+      status: 'BUSY',
+      detail: 'Wall Street Trader: NYSE & NASDAQ Top 1.000 şirket canlı fiyat ve değerleme verileri çekiliyor...',
+      payload: { status: 'SYNCING' }
+    });
+
     try {
       const allTickers = TOP_1000_US_COMPANIES_SEED.map(s => s.ticker);
       const CHUNK_SIZE = 40;
@@ -550,10 +559,10 @@ class UsUniverseService {
 
       appEventBus.emitOfficeEvent({
         type: 'US_STOCKS_SYNCED',
-        actor: 'YAHOO_ADAPTER',
-        department: 'BORSA',
+        actor: 'WALL_STREET_ADAPTER',
+        department: 'AMERIKA',
         status: 'SUCCESS',
-        detail: `Amerikan Borsaları (Top 1.000 Şirket) ${updatedCount} hisse başarıyla güncellendi.`,
+        detail: `Wall Street Trader: Amerikan Borsaları (Top 1.000 Şirket) ${updatedCount} hisse başarıyla güncellendi.`,
         payload: { count: updatedCount }
       });
       return { total: 1000, updated: updatedCount };
@@ -571,6 +580,14 @@ class UsUniverseService {
         completedAt: new Date()
       });
 
+      appEventBus.emitOfficeEvent({
+        type: 'US_STOCKS_SYNC_ERROR',
+        actor: 'WALL_STREET_ADAPTER',
+        department: 'AMERIKA',
+        status: 'ERROR',
+        detail: `Wall Street Trader Hatası: ${err.message}`,
+        payload: { error: err.message }
+      });
       return { total: 1000, updated: updatedCount };
     }
   }

@@ -25,6 +25,7 @@ import CalendarTab from './components/tabs/CalendarTab';
 import UsMarketsTab from './components/tabs/UsMarketsTab';
 import AnalystReportsTab from './components/tabs/AnalystReportsTab';
 import ApiDocsTab from './components/tabs/ApiDocsTab';
+import AgentIntegrationTab from './components/tabs/AgentIntegrationTab';
 import ApiChartsTab from './components/tabs/ApiChartsTab';
 import SystemLogsTab from './components/tabs/SystemLogsTab';
 import DbStocksTab from './components/tabs/DbStocksTab';
@@ -149,6 +150,7 @@ export default function App() {
                 {currentTab === 'sector-analytics' && <SectorAnalyticsTab />}
 
                 {currentTab === 'api' && <ApiDocsTab />}
+                {currentTab === 'agents' && <AgentIntegrationTab />}
                 {currentTab === 'api-charts' && <ApiChartsTab />}
                 {currentTab === 'system-logs' && <SystemLogsTab />}
 

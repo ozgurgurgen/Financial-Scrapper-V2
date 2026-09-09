@@ -30,8 +30,10 @@ import {
   PauseCircle,
   PlayCircle,
   Eye,
-  EyeOff
+  EyeOff,
+  Bot
 } from 'lucide-react';
+import AgentIntegrationTab from './AgentIntegrationTab';
 
 interface ApiEndpoint {
   method: 'GET' | 'POST';
@@ -239,12 +241,52 @@ const API_ENDPOINTS: ApiEndpoint[] = [
     title: 'OpenAPI 3.0 / Swagger Şeması',
     description: 'Dış uygulamaların doğrudan Postman veya OpenAPI generator ile import edebileceği API sözlüğü.',
     sampleParams: ''
+  },
+  {
+    method: 'GET',
+    path: '/api/v1/agent/tools',
+    category: 'Otonom AI Ajan Entegrasyonu',
+    title: 'OpenClaw & Harness Ajan Tool Tanımları',
+    description: 'BIST, TEFAS, ABD Piyasaları ve KAP verilerini çeken otonom YZ ajanları için fonksiyon listesi.',
+    sampleParams: ''
+  },
+  {
+    method: 'POST',
+    path: '/api/v1/agent/execute',
+    category: 'Otonom AI Ajan Entegrasyonu',
+    title: 'Agent Tool Execution Endpoint (RPC)',
+    description: 'OpenClaw veya Harness tarafından çağrılan aracın parametrelerle çalıştırılıp yanıt üretilmesi.',
+    sampleParams: ''
+  },
+  {
+    method: 'GET',
+    path: '/api/v1/agent/openclaw',
+    category: 'Otonom AI Ajan Entegrasyonu',
+    title: 'OpenClaw Plugin Manifestosu',
+    description: 'OpenClaw ajan framework ü için hazır eklenti yapılandırma ve yetkilendirme profili.',
+    sampleParams: ''
+  },
+  {
+    method: 'GET',
+    path: '/api/v1/agent/harness',
+    category: 'Otonom AI Ajan Entegrasyonu',
+    title: 'Harness Workflow Plugin Manifestosu',
+    description: 'Harness otomasyon akışları için entegrasyon manifestosu.',
+    sampleParams: ''
+  },
+  {
+    method: 'POST',
+    path: '/api/v1/agent/mcp',
+    category: 'Otonom AI Ajan Entegrasyonu',
+    title: 'Model Context Protocol (MCP) JSON-RPC 2.0',
+    description: 'Anthropic & OpenAI uyumlu Model Context Protocol standart tools/list ve tools/call desteği.',
+    sampleParams: ''
   }
 ];
 
 export default function ApiDocsTab() {
   // Navigation Tabs
-  const [activeTab, setActiveTab] = useState<'overview' | 'telemetry' | 'keys' | 'diagnostics' | 'explorer'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'telemetry' | 'keys' | 'diagnostics' | 'explorer' | 'agents'>('overview');
 
   // Overview / Telemetry States
   const [telemetryData, setTelemetryData] = useState<any>(null);
@@ -677,6 +719,19 @@ export function useFinancialFeed() {
             }`}
           >
             <Terminal className="w-4 h-4" /> İnteraktif API Test & Dokümantasyon
+          </button>
+          <button
+            onClick={() => setActiveTab('agents')}
+            className={`px-4 py-2 rounded-xl text-xs font-semibold flex items-center gap-2 transition-all whitespace-nowrap ${
+              activeTab === 'agents'
+                ? 'bg-indigo-500 text-slate-950 shadow-md shadow-indigo-500/20 font-bold'
+                : 'text-indigo-400 hover:text-white hover:bg-indigo-950/40 border border-indigo-500/30'
+            }`}
+          >
+            <Bot className="w-4 h-4" /> 🤖 AI Ajan Entegrasyonu
+            <span className="px-1.5 py-0.2 rounded-full bg-indigo-950 text-[10px] text-indigo-300 border border-indigo-400/30">
+              OPENCLAW & MCP
+            </span>
           </button>
         </div>
       </div>
@@ -1482,6 +1537,11 @@ export function useFinancialFeed() {
             )}
           </div>
         </div>
+      )}
+
+      {/* VIEW 6: OTONOM AI AJAN ENTEGRASYON MERKEZİ */}
+      {activeTab === 'agents' && (
+        <AgentIntegrationTab />
       )}
     </div>
   );

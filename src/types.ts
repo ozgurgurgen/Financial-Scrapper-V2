@@ -20,6 +20,7 @@ export type TabType =
   | 'analyst'
   | 'us'
   | 'api'
+  | 'agents'
   | 'api-charts'
   | 'system-logs'
   | 'db_stocks'

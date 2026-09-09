@@ -29,6 +29,7 @@ import {
   Radio,
   BarChart3,
   Terminal,
+  Bot,
   X
 } from 'lucide-react';
 
@@ -146,6 +147,7 @@ export default function Sidebar({
     {
       title: 'GELİŞTİRİCİ & API HUB',
       items: [
+        { id: 'agents', label: 'AI Ajan Entegrasyonu', icon: <Bot size={18} />, badge: 'OPENCLAW & MCP' },
         { id: 'system-logs', label: 'Sistem & Hata Logları', icon: <Terminal size={18} />, badge: 'DENETİM' },
         { id: 'api-charts', label: 'API Grafik & Telemetri', icon: <BarChart3 size={18} />, badge: 'GRAFİK' },
         { id: 'api', label: 'API Yönetimi & Diagnostik', icon: <Code2 size={18} />, badge: 'YÖNETİM & LOG' },

@@ -133,11 +133,23 @@ export const DEPARTMENTS: Record<DepartmentType, DepartmentConfig> = {
 };
 
 export const OFFICE_EVENT_MAP: Record<string, EventAnimationConfig> = {
+  US_STOCKS_SYNC_STARTED: {
+    department: 'AMERIKA',
+    animation: 'glow_screen',
+    defaultStatus: 'BUSY',
+    durationMs: 4000
+  },
   US_STOCKS_SYNCED: {
     department: 'AMERIKA',
     animation: 'sparkle',
     defaultStatus: 'SUCCESS',
     durationMs: 3500
+  },
+  US_STOCKS_SYNC_ERROR: {
+    department: 'AMERIKA',
+    animation: 'red_box_drop',
+    defaultStatus: 'ERROR',
+    durationMs: 5000
   },
   US_ETF_SYNCED: {
     department: 'ETF_FONLARI',

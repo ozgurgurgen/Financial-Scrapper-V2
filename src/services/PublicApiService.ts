@@ -739,12 +739,83 @@ export class PublicApiService {
       info: {
         title: 'Borsa İstanbul, TEFAS, ABD Piyasaları & Finansal Veri API Hub',
         version: '1.0.0',
-        description: 'Dış web, mobil ve kurumsal sistemlerin doğrudan Borsa İstanbul (625+ hisse), TEFAS (1.063+ fon & portföy dağılım raporları), ABD Piyasaları (1.000+ hisse & ETF), KAP bildirimleri, Halka Arzlar, Analist Raporları ve 5 yıllık OHLCV barlarını çekebileceği yüksek performanslı REST API servisi.'
+        description: 'Dış web, mobil, OpenClaw, Harness ve otonom AI ajanlarının Borsa İstanbul (625+ hisse), TEFAS (1.063+ fon & portföy dağılım raporları), ABD Piyasaları (1.000+ hisse & ETF), KAP bildirimleri, Halka Arzlar ve Analist Raporlarına erişebileceği REST & Agent RPC API servisi.'
       },
       servers: [
         { url: '/api/v1', description: 'Canlı REST API V1' }
       ],
+      security: [
+        { ApiKeyHeader: [] },
+        { BearerAuth: [] },
+        { QueryApiKey: [] }
+      ],
+      components: {
+        securitySchemes: {
+          ApiKeyHeader: {
+            type: 'apiKey',
+            in: 'header',
+            name: 'X-API-Key',
+            description: 'API Anahtarı ile Yetkilendirme (X-API-Key: fin_live_master_2026_a8f9c2d1e4)'
+          },
+          BearerAuth: {
+            type: 'http',
+            scheme: 'bearer',
+            bearerFormat: 'API_KEY_or_JWT',
+            description: 'Bearer Token ile Yetkilendirme (Authorization: Bearer fin_live_master_2026_a8f9c2d1e4)'
+          },
+          QueryApiKey: {
+            type: 'apiKey',
+            in: 'query',
+            name: 'api_key',
+            description: 'Sorgu parametresi ile Yetkilendirme (?api_key=fin_live_master_2026_a8f9c2d1e4)'
+          }
+        }
+      },
       paths: {
+        '/agent/tools': {
+          get: {
+            summary: 'Otonom Yapay Zeka Ajanları İçin Fonksiyon & Tool Tanımları (OpenClaw / Harness / MCP)',
+            description: 'OpenClaw, Harness, CrewAI ve LangChain gibi ajanların çağırabileceği tüm araçların JSON şeması.'
+          }
+        },
+        '/agent/execute': {
+          post: {
+            summary: 'Agent Tool Çalıştırma (RPC Execution Endpoint)',
+            description: 'OpenClaw veya Harness tarafından gönderilen tool adını ve parametrelerini çalıştırıp yanıt üretir.',
+            requestBody: {
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      tool: { type: 'string', example: 'bist_get_stock_detail' },
+                      parameters: { type: 'object', example: { ticker: 'THYAO' } }
+                    },
+                    required: ['tool']
+                  }
+                }
+              }
+            }
+          }
+        },
+        '/agent/openclaw': {
+          get: {
+            summary: 'OpenClaw Ajan Protokolü Entegrasyon Manifestosu',
+            description: 'OpenClaw eklenti sistemi için otomatik yapılandırma ve yetkilendirme profili.'
+          }
+        },
+        '/agent/harness': {
+          get: {
+            summary: 'Harness Workflow Plugin Manifestosu',
+            description: 'Harness otomasyon akışları ve ajan adımları için hazır yapılandırma şeması.'
+          }
+        },
+        '/agent/mcp': {
+          post: {
+            summary: 'Model Context Protocol (MCP) JSON-RPC 2.0 Uç Noktası',
+            description: 'Anthropic/OpenAI MCP istemcileri için standart tools/list ve tools/call desteği.'
+          }
+        },
         '/bist/stocks': {
           get: {
             summary: '625+ BIST Hisseleri Listesi',

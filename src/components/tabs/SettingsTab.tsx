@@ -8,6 +8,7 @@ import { apiFetch, getAuthHeaders } from '../../lib/api';
 import DatabaseControlModal from '../modals/DatabaseControlModal';
 import DataSourceHealthSubApp from './DataSourceHealthSubApp';
 import TelegramSettingsSection from './TelegramSettingsSection';
+import AgentSettingsSection from './AgentSettingsSection';
 import ConnectionTroubleshootingGuide from '../settings/ConnectionTroubleshootingGuide';
 
 export interface NewsRetentionConfig {
@@ -22,7 +23,7 @@ export interface NewsRetentionConfig {
 }
 
 export default function SettingsTab() {
-  const [activeTab, setActiveTab] = useState<'news' | 'datasources' | 'telegram' | 'ai' | 'sync' | 'system'>('datasources');
+  const [activeTab, setActiveTab] = useState<'news' | 'datasources' | 'telegram' | 'ai' | 'agents' | 'sync' | 'system'>('datasources');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [settings, setSettings] = useState<Record<string, any>>({});
@@ -532,6 +533,15 @@ export default function SettingsTab() {
           Yapay Zeka & Model
         </button>
         <button
+          onClick={() => setActiveTab('agents')}
+          className={`flex-1 min-w-[140px] flex items-center justify-center gap-2 py-2.5 text-sm font-medium rounded-lg transition-all ${
+            activeTab === 'agents' ? 'bg-indigo-600 text-white shadow-sm font-bold' : 'text-indigo-400 hover:text-neutral-700 dark:hover:text-neutral-300'
+          }`}
+        >
+          <Bot size={16} className="text-indigo-400" />
+          AI Ajan Ayarları & Bağlantı
+        </button>
+        <button
           onClick={() => setActiveTab('sync')}
           className={`flex-1 min-w-[120px] flex items-center justify-center gap-2 py-2.5 text-sm font-medium rounded-lg transition-all ${
             activeTab === 'sync' ? 'bg-white dark:bg-neutral-700 text-neutral-900 dark:text-white shadow-sm border border-neutral-200/50 dark:border-neutral-600/50' : 'text-neutral-500 hover:text-neutral-700 dark:hover:text-neutral-300'
@@ -558,6 +568,10 @@ export default function SettingsTab() {
 
         {activeTab === 'telegram' && (
           <TelegramSettingsSection />
+        )}
+
+        {activeTab === 'agents' && (
+          <AgentSettingsSection />
         )}
 
         {activeTab === 'news' && (

@@ -33,6 +33,7 @@ const TAB_TITLES: Record<TabType, { title: string; desc: string }> = {
   'api-charts': { title: 'API Grafik & Telemetri Analitiği', desc: 'İstek hacimleri, gecikme yüzdelikleri, pazar dağılımı, müşteri kota tüketimi ve tam API rehberi' },
   'system-logs': { title: 'Kapsamlı Sistem & Hata Loglama Merkezi', desc: 'API hataları, veri bağdaştırıcıları, stack trace kayıtları ve denetim izleme merkezi' },
   api: { title: 'API Yönetimi, Telemetri & Sistem Diagnostiği', desc: 'Canlı istek akışı, API anahtarları, SLA metrikleri, master aktivasyon switchi ve interaktif sandbox' },
+  agents: { title: 'Otonom AI Ajan Entegrasyonu (OpenClaw, Harness & MCP)', desc: 'OpenClaw, Harness ve Anthropic MCP ajanları için canlı tool, manifest ve RPC fonksiyon çağırma merkezi' },
   settings: { title: 'Ayarlar & Senkronizasyon', desc: 'Sistem yapılandırması ve API anahtarları' },
   'data-health': { title: 'Veri Kaynakları & Sıfır Kesinti Kalkanı', desc: 'Canlı sağlık durumu, 24s heatmap, failover denetimi ve 6 katmanlı kesintisiz veri zırhı' },
   assets: { title: '360° Varlık Veri Eşleştirme & İstihbarat Merkezi', desc: 'Analist yorumları, TEFAS kurumsal fon sahipliği, KAP ve Buffett DCF ile sıfır boşta veri' },

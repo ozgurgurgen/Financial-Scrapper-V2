@@ -44,6 +44,7 @@ import { dataSourceHealthService } from './src/services/DataSourceHealthService.
 import { telegramService } from './src/services/TelegramService.ts';
 import { apiTelemetryService } from './src/services/ApiTelemetryService.ts';
 import { comprehensiveDataService } from './src/services/ComprehensiveDataIntegrationService.ts';
+import { agentIntegrationService } from './src/services/AgentIntegrationService.ts';
 
 // Register Adapters
 syncManager.registerAdapter(new YahooAdapter());
@@ -2642,6 +2643,82 @@ SELECT pg_size_pretty(pg_database_size(current_database())) AS current_database_
       res.json(result);
     } catch (error: any) {
       res.status(500).json({ success: false, error: error.message });
+    }
+  });
+
+  // =========================================================================
+  // OTONOM YAPAY ZEKA AJAN ENTEGRASYONLARI (OPENCLAW, HARNESS, MCP, CREWAI, LANGCHAIN)
+  // =========================================================================
+
+  // 1. Ajanlar İçin Fonksiyon / Tool Tanımları Kataloğu
+  app.get('/api/v1/agent/tools', optionalAuth, (req, res) => {
+    try {
+      const tools = agentIntegrationService.getToolsList();
+      res.json({
+        success: true,
+        protocol: 'MarketPulse Agent Protocol v1',
+        authentication: {
+          supportedHeaders: ['X-API-Key', 'Authorization: Bearer <API_KEY>'],
+          queryParam: '?api_key=<API_KEY>'
+        },
+        tools
+      });
+    } catch (error: any) {
+      res.status(500).json({ success: false, error: error.message });
+    }
+  });
+
+  // 2. OpenClaw Ajan Protokolü Manifestosu
+  app.get('/api/v1/agent/openclaw', optionalAuth, (req, res) => {
+    try {
+      const protocol = req.protocol || 'http';
+      const host = req.get('host') || 'localhost:3000';
+      const baseUrl = `${protocol}://${host}`;
+      const manifest = agentIntegrationService.getOpenClawManifest(baseUrl);
+      res.json(manifest);
+    } catch (error: any) {
+      res.status(500).json({ success: false, error: error.message });
+    }
+  });
+
+  // 3. Harness Workflow Plugin Manifestosu
+  app.get('/api/v1/agent/harness', optionalAuth, (req, res) => {
+    try {
+      const protocol = req.protocol || 'http';
+      const host = req.get('host') || 'localhost:3000';
+      const baseUrl = `${protocol}://${host}`;
+      const manifest = agentIntegrationService.getHarnessManifest(baseUrl);
+      res.json(manifest);
+    } catch (error: any) {
+      res.status(500).json({ success: false, error: error.message });
+    }
+  });
+
+  // 4. Ajan Fonksiyonu Çalıştırma (RPC Execution Endpoint)
+  app.post('/api/v1/agent/execute', optionalAuth, async (req, res) => {
+    try {
+      const { tool, parameters } = req.body;
+      if (!tool) {
+        return res.status(400).json({ success: false, error: "'tool' parametresi zorunludur." });
+      }
+      const result = await agentIntegrationService.executeTool(tool, parameters || {});
+      res.json(result);
+    } catch (error: any) {
+      res.status(500).json({ success: false, error: error.message });
+    }
+  });
+
+  // 5. Model Context Protocol (MCP) JSON-RPC 2.0 Uç Noktası
+  app.post('/api/v1/agent/mcp', optionalAuth, async (req, res) => {
+    try {
+      const mcpRes = await agentIntegrationService.handleMcpRequest(req.body);
+      res.json(mcpRes);
+    } catch (error: any) {
+      res.status(500).json({
+        jsonrpc: '2.0',
+        id: req.body?.id || null,
+        error: { code: -32603, message: error.message || String(error) }
+      });
     }
   });
 

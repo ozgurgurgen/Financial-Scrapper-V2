@@ -11,6 +11,10 @@ import { syncManager } from './SyncManager.ts';
 import { tefasHoldingsService } from './TefasHoldingsService.ts';
 import { historicalBackfillService } from './HistoricalBackfillService.ts';
 import { kapFundScraperService } from './KAPFundScraperService.ts';
+import { usUniverseService } from './UsUniverseService.ts';
+import { usEtfService } from './UsEtfService.ts';
+import { analystCommentaryService } from './AnalystCommentaryService.ts';
+import { assetHubService } from './AssetHubService.ts';
 import { appEventBus, type DepartmentType, type ActorType } from './AppEventBus.ts';
 
 export interface ScheduledTaskInfo {
@@ -18,7 +22,7 @@ export interface ScheduledTaskInfo {
   name: string;
   cronExpr: string;
   intervalDescription: string;
-  category: 'BIST' | 'TEFAS' | 'KAP' | 'CRYPTO' | 'MACRO' | 'FX' | 'BACKFILL';
+  category: 'BIST' | 'TEFAS' | 'KAP' | 'CRYPTO' | 'MACRO' | 'FX' | 'US' | 'ETF' | 'BACKFILL';
   lastRunAt: string | null;
   nextRunAt?: string | null;
   lastStatus: 'IDLE' | 'RUNNING' | 'SUCCESS' | 'ERROR';
@@ -163,6 +167,62 @@ class AutomatedSchedulerService {
       isRunning: false,
       enabled: true,
     });
+
+    this.tasks.set('us_stocks', {
+      id: 'us_stocks',
+      name: 'Amerikan Borsaları (NYSE & NASDAQ) Top 1.000 Şirket Fiyat & Değerleme',
+      cronExpr: '*/15 14-22 * * 1-5', // ABD borsa saatlerinde her 15 dakikada bir
+      intervalDescription: 'ABD borsa saatlerinde her 15 dakikada bir (16:30 - 23:00 TR)',
+      category: 'US',
+      lastRunAt: null,
+      lastStatus: 'IDLE',
+      lastRecordsProcessed: 0,
+      lastMessage: 'Beklemede',
+      isRunning: false,
+      enabled: true,
+    });
+
+    this.tasks.set('us_etfs', {
+      id: 'us_etfs',
+      name: 'Global ETF & Fon Masası (52 Büyük ABD ETF AUM, NAV & Varlık Dağılımı)',
+      cronExpr: '0 */4 * * *', // Her 4 saatte bir
+      intervalDescription: 'Günde 6 kez (Her 4 saatte bir)',
+      category: 'ETF',
+      lastRunAt: null,
+      lastStatus: 'IDLE',
+      lastRecordsProcessed: 0,
+      lastMessage: 'Beklemede',
+      isRunning: false,
+      enabled: true,
+    });
+
+    this.tasks.set('analyst_reports', {
+      id: 'analyst_reports',
+      name: 'Kurumsal Aracı Kurum Analist Raporları & Yapay Zeka (AI) Sentezi',
+      cronExpr: '0 */3 * * *', // Her 3 saatte bir
+      intervalDescription: 'Günde 8 kez (Her 3 saatte bir)',
+      category: 'BIST',
+      lastRunAt: null,
+      lastStatus: 'IDLE',
+      lastRecordsProcessed: 0,
+      lastMessage: 'Beklemede',
+      isRunning: false,
+      enabled: true,
+    });
+
+    this.tasks.set('asset_registry_sync', {
+      id: 'asset_registry_sync',
+      name: '360° Veritabanı Varlık Eşleştirme & Çapraz İlişki Kataloğu (Arşiv Odası)',
+      cronExpr: '0 1 * * *', // Her gece 01:00'de
+      intervalDescription: 'Her gece saat 01:00 (Çapraz Varlık Kataloğu Yenileme)',
+      category: 'BACKFILL',
+      lastRunAt: null,
+      lastStatus: 'IDLE',
+      lastRecordsProcessed: 0,
+      lastMessage: 'Beklemede',
+      isRunning: false,
+      enabled: true,
+    });
   }
 
   public async init() {
@@ -252,7 +312,11 @@ class AutomatedSchedulerService {
       tefas_fund_holdings: { dept: 'KAP', actor: 'KAP_SCRAPER' },
       weekend_backfill_safe: { dept: 'BACKFILL', actor: 'BACKFILL_SERVICE' },
       ipo_tracking: { dept: 'HALKA_ARZ', actor: 'IPO_SERVICE' },
-      news_tracking: { dept: 'HABERLER', actor: 'NEWS_SERVICE' }
+      news_tracking: { dept: 'HABERLER', actor: 'NEWS_SERVICE' },
+      us_stocks: { dept: 'AMERIKA', actor: 'WALL_STREET_ADAPTER' },
+      us_etfs: { dept: 'ETF_FONLARI', actor: 'ETF_ADAPTER' },
+      analyst_reports: { dept: 'HABERLER', actor: 'ANALYST_SERVICE' },
+      asset_registry_sync: { dept: 'ARSIV', actor: 'MARKET_SERVICE' }
     };
 
     const targetInfo = taskDeptMap[taskId] || { dept: 'ARSIV', actor: 'SCHEDULER' };
@@ -314,6 +378,22 @@ class AutomatedSchedulerService {
         const res = await newsService.trackNews();
         recordsProcessed = res.processed;
         message = `${res.processed} yeni global finans haberi çekildi, AI duyarlılık analizi (Sentiment) tamamlandı.`;
+      } else if (taskId === 'us_stocks') {
+        const res = await usUniverseService.syncUsQuotes();
+        recordsProcessed = res.updated;
+        message = `Wall Street Trader: ${res.updated} Amerikan hissesinin canlı fiyat ve değerleme verileri senkronize edildi.`;
+      } else if (taskId === 'us_etfs') {
+        const res = await usEtfService.syncEtfs();
+        recordsProcessed = res.updatedCount;
+        message = `Global ETF Masası: ${res.updatedCount} büyük ABD ETF verisi senkronize edildi.`;
+      } else if (taskId === 'analyst_reports') {
+        const res = await analystCommentaryService.syncFromSources();
+        recordsProcessed = res.scrapedCount;
+        message = `Analist Masası: ${res.scrapedCount} kurumsal aracı kurum raporu işlendi (${res.synthesizedCount} AI sentezi tamamlandı).`;
+      } else if (taskId === 'asset_registry_sync') {
+        const res = await assetHubService.syncMasterAssetRegistry();
+        recordsProcessed = res.totalRegistered;
+        message = `Arşiv Masası: ${res.totalRegistered} varlık 360° çapraz katalogda eşleştirildi (${res.newAdded} yeni varlık eklendi).`;
       }
       
       task.lastStatus = 'SUCCESS';
