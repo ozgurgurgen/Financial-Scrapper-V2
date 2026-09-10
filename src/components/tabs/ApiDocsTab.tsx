@@ -320,6 +320,36 @@ export default function ApiDocsTab() {
   const [responseTime, setResponseTime] = useState<number | null>(null);
   const [customParams, setCustomParams] = useState<string>('');
 
+  // Host Mode Selection (Localhost vs Cloud)
+  const [hostMode, setHostMode] = useState<'cloud' | 'local3000' | 'local3001' | 'custom'>(() => {
+    if (typeof window !== 'undefined') {
+      return (localStorage.getItem('fp_agent_host_mode') as any) || 'local3001';
+    }
+    return 'local3001';
+  });
+  const [customHost, setCustomHost] = useState<string>(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('fp_agent_custom_host') || 'http://localhost:3001';
+    }
+    return 'http://localhost:3001';
+  });
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('fp_agent_host_mode', hostMode);
+      localStorage.setItem('fp_agent_custom_host', customHost);
+    }
+  }, [hostMode, customHost]);
+
+  const getEffectiveOrigin = () => {
+    if (hostMode === 'local3000') return 'http://localhost:3000';
+    if (hostMode === 'local3001') return 'http://localhost:3001';
+    if (hostMode === 'custom') return customHost.trim() || 'http://localhost:3001';
+    return typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3001';
+  };
+
+  const currentOrigin = getEffectiveOrigin();
+
   // 1. Fetch Telemetry Data
   const fetchTelemetry = useCallback(async () => {
     setTelemetryLoading(true);
@@ -479,6 +509,7 @@ export default function ApiDocsTab() {
     const start = performance.now();
     try {
       const paramsToUse = customParams !== '' ? customParams : (ep.sampleParams || '');
+      // Use relative path if running on same domain, or full URL if testing a target origin
       const fullUrl = ep.path + paramsToUse;
       const res = await fetch(fullUrl);
       const end = performance.now();
@@ -497,7 +528,6 @@ export default function ApiDocsTab() {
     }
   };
 
-  const currentOrigin = typeof window !== 'undefined' ? window.location.origin : 'https://your-api-host.com';
   const fullEndpointUrl = `${currentOrigin}${selectedEndpoint.path}${customParams || selectedEndpoint.sampleParams || ''}`;
 
   const getCodeSnippet = () => {
@@ -1443,11 +1473,78 @@ export function useFinancialFeed() {
                 </button>
               </div>
 
-              {/* URL Input Bar */}
-              <div className="mt-4">
-                <label className="block text-[11px] text-slate-400 font-semibold mb-1">Hedef API URL & Sorgu Parametreleri</label>
+              {/* URL Input Bar & Host Domain Selector */}
+              <div className="mt-4 space-y-2">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <label className="block text-[11px] text-slate-400 font-semibold">Hedef API Sunucu Domain & Sorgu Parametreleri</label>
+
+                  {/* Target Host Mode Selector */}
+                  <div className="flex items-center gap-1 overflow-x-auto">
+                    <button
+                      type="button"
+                      onClick={() => setHostMode('local3001')}
+                      className={`px-2.5 py-0.5 rounded-md text-[10px] font-bold transition-all cursor-pointer whitespace-nowrap ${
+                        hostMode === 'local3001'
+                          ? 'bg-cyan-500 text-slate-950 shadow'
+                          : 'bg-slate-950 text-slate-400 hover:text-white hover:bg-slate-800'
+                      }`}
+                    >
+                      Localhost:3001
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setHostMode('local3000')}
+                      className={`px-2.5 py-0.5 rounded-md text-[10px] font-bold transition-all cursor-pointer whitespace-nowrap ${
+                        hostMode === 'local3000'
+                          ? 'bg-cyan-500 text-slate-950 shadow'
+                          : 'bg-slate-950 text-slate-400 hover:text-white hover:bg-slate-800'
+                      }`}
+                    >
+                      Localhost:3000
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setHostMode('cloud')}
+                      className={`px-2.5 py-0.5 rounded-md text-[10px] font-bold transition-all cursor-pointer whitespace-nowrap ${
+                        hostMode === 'cloud'
+                          ? 'bg-cyan-500 text-slate-950 shadow'
+                          : 'bg-slate-950 text-slate-400 hover:text-white hover:bg-slate-800'
+                      }`}
+                    >
+                      Bulut Domain
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setHostMode('custom')}
+                      className={`px-2.5 py-0.5 rounded-md text-[10px] font-bold transition-all cursor-pointer whitespace-nowrap ${
+                        hostMode === 'custom'
+                          ? 'bg-cyan-500 text-slate-950 shadow'
+                          : 'bg-slate-950 text-slate-400 hover:text-white hover:bg-slate-800'
+                      }`}
+                    >
+                      Özel IP
+                    </button>
+                  </div>
+                </div>
+
+                {hostMode === 'custom' && (
+                  <div className="flex items-center gap-2 pt-1">
+                    <span className="text-[10px] text-slate-400 font-mono whitespace-nowrap">Özel URL:</span>
+                    <input
+                      type="text"
+                      value={customHost}
+                      onChange={(e) => setCustomHost(e.target.value)}
+                      placeholder="http://localhost:3001 veya http://127.0.0.1:8000"
+                      className="flex-1 bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1 text-xs font-mono text-cyan-300 focus:outline-none focus:border-cyan-500"
+                    />
+                  </div>
+                )}
+
                 <div className="flex items-center bg-slate-950 border border-slate-800 rounded-xl p-2 font-mono text-xs text-slate-300">
-                  <span className="text-slate-500 select-none pl-1">{currentOrigin}</span>
+                  <span className="text-emerald-400 font-semibold select-none pl-1">{currentOrigin}</span>
                   <span className="text-cyan-400 font-bold">{selectedEndpoint.path}</span>
                   <input
                     type="text"
@@ -1458,7 +1555,7 @@ export function useFinancialFeed() {
                   />
                   <button
                     onClick={() => handleCopy(fullEndpointUrl)}
-                    className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white"
+                    className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white transition-colors"
                     title="Tam URL'yi Kopyala"
                   >
                     <Copy className="w-3.5 h-3.5" />

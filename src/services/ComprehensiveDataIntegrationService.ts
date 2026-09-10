@@ -2,10 +2,19 @@ import { db } from '../db/index.ts';
 import { 
   bistStocks, bistFinancials, bistBuybacks, ipos, 
   tefasFunds, tefasPrices, tefasFundHoldings, kapDisclosures, 
-  macroIndicators, settings 
+  macroIndicators, settings, kapCompanies, cryptoOnChain, analystReports, usHistoricalCandles
 } from '../db/schema.ts';
-import { eq, desc, sql } from 'drizzle-orm';
+import { eq, desc, asc, sql } from 'drizzle-orm';
 import axios from 'axios';
+import { KAP_COMPANIES_UNIVERSE } from './kapCompaniesData.ts';
+import { generateComprehensiveBistFinancials } from './bistFinancialsData.ts';
+import { COMPREHENSIVE_BIST_BUYBACKS } from './bistBuybacksData.ts';
+import { COMPREHENSIVE_IPOS } from './iposData.ts';
+import { COMPREHENSIVE_CRYPTO_ON_CHAIN } from './cryptoOnChainData.ts';
+import { INITIAL_ANALYST_REPORTS } from './analystSeedData.ts';
+import { UsHistoricalService } from './UsHistoricalService.ts';
+
+const usHistService = new UsHistoricalService();
 
 export interface CompanyExportItem {
   ticker: string;
@@ -141,23 +150,35 @@ class ComprehensiveDataIntegrationService {
       try {
         console.log(`[ComprehensiveData] Veri entegrasyonu ve tohumlama kontrol ediliyor (Deneme ${attempt}/${maxAttempts})...`);
         
-        // 1. BIST Stocks Seed & Update
+        // 1. KAP Companies Master Registry
+        try { await this.seedKapCompanies(); } catch (e: any) { console.warn('[ComprehensiveData] KAP şirketler tohumlama uyarısı:', e.message); }
+
+        // 2. BIST Stocks Seed & Update
         try { await this.seedBistStocks(); } catch (e: any) { console.warn('[ComprehensiveData] BIST tohumlama uyarısı:', e.message); }
 
-        // 2. Financials (36 Sütun) Seed
+        // 3. Financials (36 Sütun, 608+ Şirket x 4 Çeyrek) Seed
         try { await this.seedFinancials(); } catch (e: any) { console.warn('[ComprehensiveData] Finansallar tohumlama uyarısı:', e.message); }
 
-        // 3. Share Buybacks Seed
+        // 4. Share Buybacks Seed
         try { await this.seedBuybacks(); } catch (e: any) { console.warn('[ComprehensiveData] Geri alımlar tohumlama uyarısı:', e.message); }
 
-        // 4. IPOs Seed
+        // 5. IPOs Seed
         try { await this.seedIpos(); } catch (e: any) { console.warn('[ComprehensiveData] Halka arzlar tohumlama uyarısı:', e.message); }
 
-        // 5. TEFAS Fund Holdings Seed
+        // 6. TEFAS Fund Holdings Seed
         try { await this.seedTefasHoldings(); } catch (e: any) { console.warn('[ComprehensiveData] TEFAS portföy tohumlama uyarısı:', e.message); }
 
-        // 6. KAP Disclosures Seed
+        // 7. KAP Disclosures Seed
         try { await this.seedDisclosures(); } catch (e: any) { console.warn('[ComprehensiveData] KAP bildirimleri tohumlama uyarısı:', e.message); }
+
+        // 8. Crypto On-Chain Seed
+        try { await this.seedCryptoOnChain(); } catch (e: any) { console.warn('[ComprehensiveData] Kripto on-chain tohumlama uyarısı:', e.message); }
+
+        // 9. Analyst Research Reports Seed
+        try { await this.seedAnalystReports(); } catch (e: any) { console.warn('[ComprehensiveData] Analist raporları tohumlama uyarısı:', e.message); }
+
+        // 10. US 5Y Historical Candles Seed
+        try { await this.seedUsHistorical(); } catch (e: any) { console.warn('[ComprehensiveData] ABD geçmiş veri tohumlama uyarısı:', e.message); }
 
         this.isInitialized = true;
         console.log('[ComprehensiveData] Tüm eksik veri setleri ve tablolar başarıyla entegre edildi.');
@@ -172,6 +193,26 @@ class ComprehensiveDataIntegrationService {
   }
 
   // --- SEED METHODS ---
+
+  private async seedKapCompanies(): Promise<void> {
+    try {
+      const existing = await db.select({ count: sql<number>`count(*)` }).from(kapCompanies);
+      const count = Number(existing[0]?.count || 0);
+      if (count >= 50) return;
+
+      console.log(`[ComprehensiveData] ${KAP_COMPANIES_UNIVERSE.length} KAP şirketi veri tabanına senkronize ediliyor...`);
+      for (const item of KAP_COMPANIES_UNIVERSE) {
+        const found = await db.select().from(kapCompanies).where(eq(kapCompanies.symbol, item.symbol)).limit(1);
+        if (found.length === 0) {
+          await db.insert(kapCompanies).values(item);
+        } else {
+          await db.update(kapCompanies).set(item).where(eq(kapCompanies.symbol, item.symbol));
+        }
+      }
+    } catch (e: any) {
+      console.warn('[ComprehensiveData] seedKapCompanies notice:', e.message);
+    }
+  }
 
   private async seedBistStocks(): Promise<void> {
     const existing = await db.select().from(bistStocks).limit(5);
@@ -426,317 +467,179 @@ class ComprehensiveDataIntegrationService {
   }
 
   private async seedFinancials(): Promise<void> {
-    const existing = await db.select().from(bistFinancials).limit(1);
-    if (existing.length > 0) return;
+    try {
+      const existing = await db.select({ count: sql<number>`count(*)` }).from(bistFinancials);
+      const count = Number(existing[0]?.count || 0);
+      if (count >= 100) return;
 
-    const mockFinancials = [
-      {
-        ticker: 'EREGL',
-        year: 2026,
-        period: 6,
-        announcedDate: '2026-08-15',
-        revenue: '85000000000',
-        revenueYoy: '38.50',
-        grossProfit: '14200000000',
-        grossMargin: '16.70',
-        operatingProfit: '11500000000',
-        operatingMargin: '13.50',
-        ebitda: '13800000000',
-        ebitdaMargin: '16.20',
-        netProfit: '9200000000',
-        netProfitYoy: '44.20',
-        netMargin: '10.80',
-        totalAssets: '195000000000',
-        currentAssets: '78000000000',
-        shortTermLiabilities: '45000000000',
-        longTermLiabilities: '38000000000',
-        netDebt: '6400000000',
-        equity: '112000000000',
-        workingCapital: '33000000000',
-        freeCashFlow: '5600000000',
-        operatingCashFlow: '9800000000',
-        capex: '4200000000',
-        paidCapital: '3500000000',
-        retainedEarnings: '65000000000',
-        disclosureId: '1655968'
-      },
-      {
-        ticker: 'THYAO',
-        year: 2026,
-        period: 6,
-        announcedDate: '2026-08-12',
-        revenue: '215000000000',
-        revenueYoy: '42.80',
-        grossProfit: '46800000000',
-        grossMargin: '21.77',
-        operatingProfit: '38200000000',
-        operatingMargin: '17.77',
-        ebitda: '48500000000',
-        ebitdaMargin: '22.56',
-        netProfit: '32400000000',
-        netProfitYoy: '36.50',
-        netMargin: '15.07',
-        totalAssets: '780000000000',
-        currentAssets: '210000000000',
-        shortTermLiabilities: '165000000000',
-        longTermLiabilities: '280000000000',
-        netDebt: '85000000000',
-        equity: '335000000000',
-        workingCapital: '45000000000',
-        freeCashFlow: '24500000000',
-        operatingCashFlow: '41200000000',
-        capex: '16700000000',
-        paidCapital: '1380000000',
-        retainedEarnings: '245000000000',
-        disclosureId: '1654891'
-      },
-      {
-        ticker: 'TUPRS',
-        year: 2026,
-        period: 6,
-        announcedDate: '2026-08-14',
-        revenue: '320000000000',
-        revenueYoy: '28.40',
-        grossProfit: '38500000000',
-        grossMargin: '12.03',
-        operatingProfit: '29400000000',
-        operatingMargin: '9.19',
-        ebitda: '34800000000',
-        ebitdaMargin: '10.88',
-        netProfit: '24100000000',
-        netProfitYoy: '18.90',
-        netMargin: '7.53',
-        totalAssets: '290000000000',
-        currentAssets: '145000000000',
-        shortTermLiabilities: '110000000000',
-        longTermLiabilities: '42000000000',
-        netDebt: '12500000000',
-        equity: '138000000000',
-        workingCapital: '35000000000',
-        freeCashFlow: '16800000000',
-        operatingCashFlow: '28400000000',
-        capex: '11600000000',
-        paidCapital: '1926795598',
-        retainedEarnings: '95000000000',
-        disclosureId: '1655102'
-      },
-      {
-        ticker: 'ASELS',
-        year: 2026,
-        period: 6,
-        announcedDate: '2026-08-18',
-        revenue: '44500000000',
-        revenueYoy: '52.10',
-        grossProfit: '13800000000',
-        grossMargin: '31.01',
-        operatingProfit: '10400000000',
-        operatingMargin: '23.37',
-        ebitda: '11900000000',
-        ebitdaMargin: '26.74',
-        netProfit: '8650000000',
-        netProfitYoy: '48.30',
-        netMargin: '19.44',
-        totalAssets: '185000000000',
-        currentAssets: '98000000000',
-        shortTermLiabilities: '52000000000',
-        longTermLiabilities: '31000000000',
-        netDebt: '8900000000',
-        equity: '102000000000',
-        workingCapital: '46000000000',
-        freeCashFlow: '4200000000',
-        operatingCashFlow: '8900000000',
-        capex: '4700000000',
-        paidCapital: '4560000000',
-        retainedEarnings: '58000000000',
-        disclosureId: '1656040'
-      },
-      {
-        ticker: 'BIMAS',
-        year: 2026,
-        period: 6,
-        announcedDate: '2026-08-20',
-        revenue: '198000000000',
-        revenueYoy: '46.50',
-        grossProfit: '37200000000',
-        grossMargin: '18.79',
-        operatingProfit: '12400000000',
-        operatingMargin: '6.26',
-        ebitda: '16100000000',
-        ebitdaMargin: '8.13',
-        netProfit: '9400000000',
-        netProfitYoy: '32.10',
-        netMargin: '4.75',
-        totalAssets: '142000000000',
-        currentAssets: '54000000000',
-        shortTermLiabilities: '58000000000',
-        longTermLiabilities: '22000000000',
-        netDebt: '6200000000',
-        equity: '62000000000',
-        workingCapital: '-4000000000',
-        freeCashFlow: '7100000000',
-        operatingCashFlow: '14200000000',
-        capex: '7100000000',
-        paidCapital: '607200000',
-        retainedEarnings: '48000000000',
-        disclosureId: '1656300'
+      console.log('[ComprehensiveData] 608+ BIST hissesi için 4 çeyreklik detaylı finansal tablolar (bist_financials) tohumlanıyor...');
+      const allFinancials = generateComprehensiveBistFinancials();
+
+      // Insert in chunks of 150
+      for (let i = 0; i < allFinancials.length; i += 150) {
+        const chunk = allFinancials.slice(i, i + 150);
+        await db.insert(bistFinancials).values(chunk);
       }
-    ];
-
-    for (const item of mockFinancials) {
-      await db.insert(bistFinancials).values(item);
+      console.log(`[ComprehensiveData] Toplam ${allFinancials.length} çeyreklik bilanço kaydı başarıyla eklendi.`);
+    } catch (e: any) {
+      console.warn('[ComprehensiveData] seedFinancials notice:', e.message);
     }
   }
 
   private async seedBuybacks(): Promise<void> {
-    const existing = await db.select().from(bistBuybacks).limit(1);
-    if (existing.length > 0) return;
+    try {
+      const existing = await db.select({ count: sql<number>`count(*)` }).from(bistBuybacks);
+      const count = Number(existing[0]?.count || 0);
+      if (count >= 20) return;
 
-    const mockBuybacks = [
-      {
-        ticker: 'THYAO',
-        date: '2026-09-04',
-        sharesBought: '250000',
-        pricePaid: '316.40',
-        totalTry: '79100000',
-        cumulativeShares: '14200000',
-        percentageOfCapital: '1.03',
-        programAuthorizedTry: '5000000000',
-        disclosureId: '1654890'
-      },
-      {
-        ticker: 'SISE',
-        date: '2026-09-05',
-        sharesBought: '500000',
-        pricePaid: '48.60',
-        totalTry: '24300000',
-        cumulativeShares: '48900000',
-        percentageOfCapital: '1.60',
-        programAuthorizedTry: '3000000000',
-        disclosureId: '1655120'
-      },
-      {
-        ticker: 'SAHOL',
-        date: '2026-09-03',
-        sharesBought: '350000',
-        pricePaid: '93.80',
-        totalTry: '32830000',
-        cumulativeShares: '31200000',
-        percentageOfCapital: '1.53',
-        programAuthorizedTry: '3500000000',
-        disclosureId: '1654400'
-      },
-      {
-        ticker: 'MPARK',
-        date: '2026-09-02',
-        sharesBought: '45000',
-        pricePaid: '284.50',
-        totalTry: '12802500',
-        cumulativeShares: '8200000',
-        percentageOfCapital: '3.94',
-        programAuthorizedTry: '1500000000',
-        disclosureId: '1653990'
-      },
-      {
-        ticker: 'BIMAS',
-        date: '2026-08-28',
-        sharesBought: '60000',
-        pricePaid: '578.00',
-        totalTry: '34680000',
-        cumulativeShares: '6450000',
-        percentageOfCapital: '1.06',
-        programAuthorizedTry: '4000000000',
-        disclosureId: '1652880'
+      console.log(`[ComprehensiveData] ${COMPREHENSIVE_BIST_BUYBACKS.length} adet hisse geri alım programı (bist_buybacks) tohumlanıyor...`);
+      for (const item of COMPREHENSIVE_BIST_BUYBACKS) {
+        await db.insert(bistBuybacks).values({
+          ticker: item.ticker,
+          date: item.lastPurchaseDate || item.programStartDate || '2026-09-04',
+          sharesBought: item.purchasedShares,
+          pricePaid: item.averagePriceTry,
+          totalTry: item.purchasedBudgetTry,
+          cumulativeShares: item.purchasedShares,
+          percentageOfCapital: item.currentCapitalPct,
+          programAuthorizedTry: item.authorizedBudgetTry,
+          disclosureId: item.disclosureIndex || '1650000'
+        });
       }
-    ];
-
-    for (const item of mockBuybacks) {
-      await db.insert(bistBuybacks).values(item);
+    } catch (e: any) {
+      console.warn('[ComprehensiveData] seedBuybacks notice:', e.message);
     }
   }
 
   private async seedIpos(): Promise<void> {
-    const existing = await db.select().from(ipos).limit(1);
-    const mockIpos = [
-      {
-        companyCode: 'KARYE',
-        companyName: 'Kartal Yenilenebilir Enerji A.Ş.',
-        status: 'APPROVED',
-        price: '42.50 TL',
-        offerPrice: '42.50',
-        totalShares: '30000000',
-        ipoSizeTry: '1275000000',
-        dates: '12-13-14 Eylül 2026',
-        dateStr: '12-14 Eylül 2026',
-        distributionType: 'Eşit Dağıtım',
-        consortiumLeader: 'Gedik Yatırım Menkul Değerler A.Ş.',
-        bistMarket: 'Yıldız Pazar',
-        peRatioIpo: '7.80',
-        discountRate: '22.50',
-        prospectusUrl: 'https://www.kap.org.tr/tr/Bildirim/1655968',
-        fundUsage: 'Güneş Enerjisi Santral Yatırımı (%55), İşletme Sermayesi (%30), Kısa Vadeli Kredi Ödemesi (%15)',
-        fundUsageJson: [
-          { area: 'Güneş Enerjisi Santral Yatırımı', percentage: 55 },
-          { area: 'İşletme Sermayesi Finansmanı', percentage: 30 },
-          { area: 'Kısa Vadeli Banka Kredi Ödemesi', percentage: 15 }
-        ],
-        allotmentResult: {
-          total_applicants: 2450000,
-          shares_per_investor: 12,
-          allotment_try: 510
-        },
-        sentiment: 'YÜKSEK POTANSİYEL',
-        aiSummary: 'Güneş santrali kapasite artırımı odaklı, makul çarpanlı halka arz.',
-        ipoSize: '1.275 Milyar TL',
-        freeFloat: '%25.0',
-        currentPrice: '42.50',
-        dayChangePct: '+0.00%'
-      },
-      {
-        companyCode: 'ALTNY',
-        companyName: 'Altınay Savunma Teknolojileri A.Ş.',
-        status: 'LISTED',
-        price: '32.00 TL',
-        offerPrice: '32.00',
-        totalShares: '58823530',
-        ipoSizeTry: '1882352960',
-        dates: '8-9-10 Mayıs 2026',
-        dateStr: 'Mayıs 2026',
-        distributionType: 'Bireysele Eşit Dağıtım',
-        consortiumLeader: 'TSKB & Ziraat Yatırım',
-        bistMarket: 'Yıldız Pazar',
-        peRatioIpo: '14.50',
-        discountRate: '20.10',
-        prospectusUrl: 'https://www.kap.org.tr',
-        fundUsage: 'Yeni tesis yatırımı (%50), Ar-Ge (%30), İşletme sermayesi (%20)',
-        fundUsageJson: [
-          { area: 'Yeni Tesis ve Kapasite Artışı', percentage: 50 },
-          { area: 'Savunma Ar-Ge Projeleri', percentage: 30 },
-          { area: 'İşletme Sermayesi', percentage: 20 }
-        ],
-        allotmentResult: {
-          total_applicants: 3620000,
-          shares_per_investor: 16,
-          allotment_try: 512
-        },
-        sentiment: 'YÜKSEK POTANSİYEL',
-        aiSummary: 'Savunma sanayi teknolojilerinde yüksek sipariş büyümesi.',
-        ipoSize: '1.88 Milyar TL',
-        freeFloat: '%25.0',
-        currentPrice: '94.50',
-        dayChangePct: '+3.20%',
-        ceilingStreak: 8,
-        maxCeilingStreak: 8,
-        totalReturnPct: '+195.3%'
-      }
-    ];
+    try {
+      const existing = await db.select({ count: sql<number>`count(*)` }).from(ipos);
+      const count = Number(existing[0]?.count || 0);
+      if (count >= 10) return;
 
-    for (const item of mockIpos) {
-      const exists = await db.select().from(ipos).where(eq(ipos.companyCode, item.companyCode)).limit(1);
-      if (exists.length === 0) {
-        await db.insert(ipos).values(item);
-      } else {
-        await db.update(ipos).set(item).where(eq(ipos.companyCode, item.companyCode));
+      console.log(`[ComprehensiveData] ${COMPREHENSIVE_IPOS.length} adet halka arz (ipos) kaydı tohumlanıyor...`);
+      for (const item of COMPREHENSIVE_IPOS) {
+        const formatted = {
+          companyCode: item.ticker,
+          companyName: item.companyName,
+          status: item.status,
+          price: `${item.ipoPrice} TL`,
+          offerPrice: item.ipoPrice,
+          totalShares: item.totalOfferedShares,
+          ipoSizeTry: item.publicOfferingSizeTry,
+          dates: `${item.applicationStartDate} - ${item.applicationEndDate}`,
+          dateStr: item.applicationStartDate,
+          distributionType: Number(item.allotmentIndividualPct) > 50 ? 'Bireysele Eşit Dağıtım' : 'Oransal Dağıtım',
+          consortiumLeader: item.consortiumLeader,
+          bistMarket: 'Yıldız Pazar',
+          peRatioIpo: item.peRatioPreIpo || '10.50',
+          discountRate: item.discountRatePct || '20.00',
+          prospectusUrl: 'https://www.kap.org.tr',
+          fundUsage: `Kapasite ve Tesis Yatırımı (%${item.fundUsagePlan?.factoryExpansion || item.fundUsagePlan?.capacityExpansion || item.fundUsagePlan?.solarenergyInvestments || 50}), İşletme Sermayesi (%30)`,
+          fundUsageJson: item.fundUsagePlan ? Object.entries(item.fundUsagePlan).map(([k, v]) => ({ area: k, percentage: v })) : [],
+          allotmentResult: {
+            total_applicants: item.totalParticipants,
+            shares_per_investor: item.totalParticipants > 0 ? Math.round(Number(item.totalOfferedShares) / item.totalParticipants) : 0,
+            allotment_try: item.totalParticipants > 0 ? Math.round((Number(item.totalOfferedShares) / item.totalParticipants) * Number(item.ipoPrice)) : 0
+          },
+          sentiment: 'YÜKSEK POTANSİYEL',
+          aiSummary: `${item.companyName} halka arz büyüklüğü ${Number(item.publicOfferingSizeTry) / 1e6} Milyon TL.`,
+          ipoSize: `${(Number(item.publicOfferingSizeTry) / 1e9).toFixed(2)} Milyar TL`,
+          freeFloat: `%${item.freeFloatPct}`,
+          currentPrice: item.currentPrice || item.ipoPrice,
+          dayChangePct: '+0.00%',
+          ceilingStreak: item.ceilingDays,
+          maxCeilingStreak: item.ceilingDays,
+          totalReturnPct: item.returnSinceIpoPct ? `+${item.returnSinceIpoPct}%` : '+0.0%'
+        };
+
+        const exists = await db.select().from(ipos).where(eq(ipos.companyCode, item.ticker)).limit(1);
+        if (exists.length === 0) {
+          await db.insert(ipos).values(formatted as any);
+        } else {
+          await db.update(ipos).set(formatted as any).where(eq(ipos.companyCode, item.ticker));
+        }
       }
+    } catch (e: any) {
+      console.warn('[ComprehensiveData] seedIpos notice:', e.message);
+    }
+  }
+
+  private async seedCryptoOnChain(): Promise<void> {
+    try {
+      const existing = await db.select({ count: sql<number>`count(*)` }).from(cryptoOnChain);
+      const count = Number(existing[0]?.count || 0);
+      if (count >= 15) return;
+
+      console.log(`[ComprehensiveData] ${COMPREHENSIVE_CRYPTO_ON_CHAIN.length} kripto varlık on-chain metrikleri tohumlanıyor...`);
+      for (const item of COMPREHENSIVE_CRYPTO_ON_CHAIN) {
+        const payload = {
+          symbol: item.symbol,
+          date: '2026-09-08',
+          inOutMoneyPct: item.inOutMoneyPct,
+          outMoneyPct: item.outMoneyPct,
+          largeTxsVolumeUsd: item.largeTxsVolumeUsd,
+          largeTxsCount: item.largeTxsCount,
+          networkGrowthPct: item.networkGrowthPct,
+          concentrationWhalesPct: item.concentrationWhalesPct,
+          sentimentScore: item.sentimentScore,
+          summaryText: item.summaryText
+        };
+        const found = await db.select().from(cryptoOnChain).where(eq(cryptoOnChain.symbol, item.symbol)).limit(1);
+        if (found.length === 0) {
+          await db.insert(cryptoOnChain).values(payload);
+        } else {
+          await db.update(cryptoOnChain).set(payload).where(eq(cryptoOnChain.symbol, item.symbol));
+        }
+      }
+    } catch (e: any) {
+      console.warn('[ComprehensiveData] seedCryptoOnChain notice:', e.message);
+    }
+  }
+
+  private async seedAnalystReports(): Promise<void> {
+    try {
+      const existing = await db.select({ count: sql<number>`count(*)` }).from(analystReports);
+      const count = Number(existing[0]?.count || 0);
+      if (count >= 30) return;
+
+      console.log(`[ComprehensiveData] ${INITIAL_ANALYST_REPORTS.length} analist araştırma raporu tohumlanıyor...`);
+      for (const item of INITIAL_ANALYST_REPORTS) {
+        await db.insert(analystReports).values({
+          market: item.market || 'BIST',
+          source: item.source || 'KAP_RESEARCH',
+          sourceName: item.sourceName,
+          sourceUrl: item.sourceUrl,
+          author: item.author,
+          ticker: item.ticker,
+          assetName: item.assetName,
+          title: item.title,
+          rawContent: item.rawContent,
+          recommendation: item.recommendation,
+          targetPrice: item.targetPrice ? String(item.targetPrice) : null,
+          currentPriceAtReport: item.currentPriceAtReport ? String(item.currentPriceAtReport) : null,
+          upsidePct: item.upsidePct ? String(item.upsidePct) : null,
+          currency: item.currency || 'TRY',
+          publishDate: new Date(item.publishDate),
+          aiSummary: item.aiSummary,
+          aiSentiment: item.aiSentiment,
+          aiSentimentScore: item.aiSentimentScore ? String(item.aiSentimentScore) : '0.500',
+          keyBullArguments: item.keyBullArguments,
+          keyBearRisks: item.keyBearRisks,
+          isSynthesized: true,
+          synthesizedAt: new Date()
+        });
+      }
+    } catch (e: any) {
+      console.warn('[ComprehensiveData] seedAnalystReports notice:', e.message);
+    }
+  }
+
+  private async seedUsHistorical(): Promise<void> {
+    try {
+      await usHistService.ensureHistoricalSeeded();
+    } catch (e: any) {
+      console.warn('[ComprehensiveData] seedUsHistorical notice:', e.message);
     }
   }
 
@@ -959,7 +862,7 @@ class ComprehensiveDataIntegrationService {
   public async getFundsExport(code?: string): Promise<FundExportItem[]> {
     const fundsList = code 
       ? await db.select().from(tefasFunds).where(eq(tefasFunds.code, code.toUpperCase())).limit(1)
-      : await db.select().from(tefasFunds).limit(20);
+      : await db.select().from(tefasFunds).limit(50);
 
     const allHoldings = await db.select().from(tefasFundHoldings);
     const holdingsByCode: Record<string, any[]> = {};
@@ -972,42 +875,69 @@ class ComprehensiveDataIntegrationService {
 
     for (const f of fundsList) {
       const holdings = (holdingsByCode[f.code] || []).slice(0, 10);
+      
+      // Query dynamic prices from tefasPrices
+      const prices = await db.select().from(tefasPrices)
+        .where(eq(tefasPrices.fundId, f.id))
+        .orderBy(desc(tefasPrices.date))
+        .limit(30);
+
+      const latest = prices[0];
+      const currentPrice = latest ? Number(latest.price) : 15.40;
+      const dailyReturn = latest ? Number(latest.dailyChange || 0) : 0.85;
+      const return1M = latest?.return1M ? Number(latest.return1M) : 7.20;
+      const return3M = latest?.return3M ? Number(latest.return3M) : 21.50;
+      const return6M = latest?.return6M ? Number(latest.return6M) : 46.80;
+      const return1Y = latest?.return1Y ? Number(latest.return1Y) : 92.40;
+      const returnYTD = latest?.returnYTD ? Number(latest.returnYTD) : 38.60;
+      const totalVal = latest ? Number(latest.marketCap || 4500000000) : 4500000000;
+      const shares = latest ? Number(latest.shares || 300000000) : 300000000;
+      const investors = latest ? Number(latest.investorCount || 28000) : 28000;
+
+      const allocation = (latest?.assetAllocation as Record<string, number>) || {
+        "hisse_senedi": 85.0,
+        "para_piyasasi": 8.0,
+        "kamu_borclanma": 0.0,
+        "diger": 7.0
+      };
+
+      const priceHistory = prices.length > 0 
+        ? prices.slice().reverse().map(p => ({
+            date: p.date.toISOString().split('T')[0],
+            price: Number(p.price)
+          }))
+        : [
+            { date: '2026-09-01', price: currentPrice * 0.98 },
+            { date: '2026-09-02', price: currentPrice * 0.985 },
+            { date: '2026-09-03', price: currentPrice * 0.99 },
+            { date: '2026-09-04', price: currentPrice * 0.995 },
+            { date: '2026-09-05', price: currentPrice }
+          ];
+
       result.push({
         code: f.code,
         name: f.name,
         category: f.type || 'Hisse Senedi Şemsiye Fonu',
-        price: 14.85,
-        daily_return: 1.25,
-        return_1m: 8.40,
-        return_3m: 22.10,
-        return_6m: 48.30,
-        return_1y: 94.50,
-        return_ytd: 41.20,
-        total_value: 4500000000,
-        outstanding_shares: 303000000,
-        investor_count: 34200,
+        price: currentPrice,
+        daily_return: dailyReturn,
+        return_1m: return1M,
+        return_3m: return3M,
+        return_6m: return6M,
+        return_1y: return1Y,
+        return_ytd: returnYTD,
+        total_value: totalVal,
+        outstanding_shares: shares,
+        investor_count: investors,
         management_fee: Number(f.managementFee || 2.90),
         sharpe_ratio: 2.14,
         standard_deviation: 18.5,
         loss_days_ratio: 38.2,
-        allocation: {
-          "hisse_senedi": 88.50,
-          "para_piyasasi": 6.20,
-          "kamu_borclanma": 0.0,
-          "ozel_sektor_borclanma": 0.0,
-          "diger": 5.30
-        },
+        allocation: allocation,
         top_holdings: holdings.map(h => ({
           ticker: h.assetSymbol,
           weight_pct: Number(h.weightPct)
         })),
-        price_history: [
-          { date: '2026-09-01', price: 14.45 },
-          { date: '2026-09-02', price: 14.58 },
-          { date: '2026-09-03', price: 14.62 },
-          { date: '2026-09-04', price: 14.71 },
-          { date: '2026-09-05', price: 14.85 }
-        ]
+        price_history: priceHistory
       });
     }
 

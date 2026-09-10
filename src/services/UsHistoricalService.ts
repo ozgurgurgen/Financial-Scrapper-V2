@@ -3,6 +3,7 @@ import { db } from '../db/index.ts';
 import { usHistoricalCandles, usStocks, usEtfs } from '../db/schema.ts';
 import { eq, and, desc, asc, sql } from 'drizzle-orm';
 import { appEventBus } from './AppEventBus.ts';
+import { generateUsHistoricalCandlesSeed } from './usHistoricalSeedData.ts';
 
 const yf = new YahooFinance({ suppressNotices: ['yahooSurvey'] });
 
@@ -40,9 +41,31 @@ export interface Historical5YPerformance {
 
 export class UsHistoricalService {
   /**
+   * Ensures historical candles are populated in database
+   */
+  public async ensureHistoricalSeeded(): Promise<number> {
+    try {
+      const existing = await db.select({ count: sql<number>`count(*)` }).from(usHistoricalCandles);
+      const count = Number(existing[0]?.count || 0);
+      if (count >= 100) return count;
+
+      console.log('[US History] Seeding historical daily OHLCV candles...');
+      const seedCandles = generateUsHistoricalCandlesSeed();
+      for (let i = 0; i < seedCandles.length; i += 200) {
+        const chunk = seedCandles.slice(i, i + 200);
+        await db.insert(usHistoricalCandles).values(chunk);
+      }
+      return seedCandles.length;
+    } catch (e: any) {
+      console.warn('[US History] ensureHistoricalSeeded notice:', e.message);
+      return 0;
+    }
+  }
+
+  /**
    * Fetches real 5-year historical OHLCV data using Yahoo Finance API
    */
-  public async fetch5YearHistory(ticker: string): Promise<CandlePoint[]> {
+  public async fetch5YearHistory(ticker: string, assetType: 'STOCK' | 'ETF' = 'STOCK'): Promise<CandlePoint[]> {
     const symbol = ticker.toUpperCase().trim();
     try {
       const fiveYearsAgo = new Date(Date.now() - 5 * 365.25 * 24 * 60 * 60 * 1000);
@@ -80,12 +103,17 @@ export class UsHistoricalService {
 
         recordsToInsert.push({
           ticker: symbol,
-          date: d,
+          assetType: assetType,
+          currency: 'USD',
+          period: 'DAILY',
+          date: dateStr,
+          timestamp: d,
           open: String(open),
           high: String(high),
           low: String(low),
           close: String(close),
-          volume: String(volume)
+          volume: String(volume),
+          adjClose: String(q.adjclose ?? close)
         });
       }
 
@@ -95,8 +123,7 @@ export class UsHistoricalService {
           for (let i = 0; i < recordsToInsert.length; i += 200) {
             const chunk = recordsToInsert.slice(i, i + 200);
             await db.insert(usHistoricalCandles)
-              .values(chunk)
-              .onConflictDoNothing();
+              .values(chunk);
           }
         } catch (dbErr: any) {
           console.warn(`[US History] DB save skipped for ${symbol}:`, dbErr.message);
@@ -115,8 +142,8 @@ export class UsHistoricalService {
 
         if (rows.length > 0) {
           return rows.map(r => ({
-            date: new Date(r.date).toISOString().split('T')[0],
-            timestamp: new Date(r.date).toISOString(),
+            date: r.date,
+            timestamp: new Date(r.timestamp).toISOString(),
             open: Number(r.open),
             high: Number(r.high),
             low: Number(r.low),
